@@ -31,8 +31,8 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ ▼ 🎬 Hyper NLA Exporter                  │
 ├──────────────────────────────────────────┤
 │ ┌─ Marker Segments ──────────────────┐   │
-│ │ [Walk] 1–60 (60f)                  │   │
-│ │ [Run] 61–120 (60f)                 │   │
+│ │ 👁 [▶] [ Walk       ] 1~60 (60f) 🗑 │   │
+│ │ 👁 [▶] [ Run        ] 61~120(60f) 🗑 │   │
 │ │ [Reset Range]                      │   │
 │ └────────────────────────────────────┘   │
 │                                          │
@@ -41,6 +41,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ └────────────────────────────────────┘   │
 │                                          │
 │ ┌─ Settings ─────────────────────────┐   │
+│ │ [ ] Only Deform Bones              │   │
 │ │ [x] Create Boundary Keys           │   │
 │ │ [x] Selected Only                  │   │
 │ └────────────────────────────────────┘   │
@@ -53,10 +54,14 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 └──────────────────────────────────────────┘
 ```
 
-* **Marker Segments**: Displays parsed timeline markers. Click a segment's button to automatically set the timeline playback range to its start and end frames for a quick preview.
+* **Marker Segments**: Displays parsed timeline markers and provides inline management.
+  * *Mute Toggle (Eye Icon)*: Exclude specific clips from Quick Export without deleting the marker.
+  * *Preview (Play Icon)*: Set the timeline playback range to this segment for a quick preview.
+  * *Rename/Delete*: Rename markers inline via the text field or delete them instantly via the trash icon.
   * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 0 to the last marker).
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
+  * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
   * *Selected Only*: Processes only active selection.
 * **Quick Export (Marker Split)**:

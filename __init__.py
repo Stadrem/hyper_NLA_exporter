@@ -109,6 +109,7 @@ def get_marker_segments(scene):
             "start": seg_start,
             "end": marker.frame,
             "length": marker.frame - seg_start + 1,
+            "marker": marker,
         })
         seg_start = marker.frame + 1
 
@@ -227,8 +228,10 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
     strip_infos = []
 
     for track in anim.nla_tracks:
+        if getattr(track, 'mute', False):
+            continue
         for strip in track.strips:
-            if strip.action is None:
+            if strip.action is None or getattr(strip, 'mute', False):
                 continue
 
             # -- Map action-local frames to timeline frames ----------
@@ -430,6 +433,9 @@ def _temporary_nla_split(objects, scene):
         original_action = state['original_action']
 
         for seg in segments:
+            if getattr(seg['marker'], "m2nla_muted", False):
+                continue
+
             # Action name includes object prefix to avoid collisions
             # across different rigs. NLA Track name stays as marker name
             # (that's what glTF uses as the animation clip name).
@@ -470,14 +476,20 @@ def _temporary_nla_split(objects, scene):
                 bpy.data.actions.remove(new_action)
 
         # Detach the source action so the NLA strips are what gets exported.
-        state['anim'].action = None
+        # FIX: We intentionally leave the original action active! 
+        # Exporters evaluate the Bind Pose with all NLA tracks overlapping. By leaving 
+        # the original action active, it overrides the NLA stack for the Bind Pose, 
+        # preserving the correct scale (e.g. 100x). Both FBX and GLB exporters will 
+        # still correctly solo and bake the NLA strips while ignoring the active action.
+        # state['anim'].action = None
 
     # Temporarily set scene range to cover the longest segment from frame 1
     scene.frame_start = 1
     scene.frame_end = max_len
 
-    bpy.context.view_layer.depsgraph.update()
-    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    if depsgraph:
+        depsgraph.update()
     current_frame = scene.frame_current
     scene.frame_set(current_frame)
 
@@ -549,6 +561,7 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
                 bpy.ops.export_scene.fbx(
                     filepath=self.filepath,
                     use_selection=scene.m2nla_selected_only,
+                    use_armature_deform_only=scene.m2nla_only_deform_bones,
                     bake_anim=True,
                     bake_anim_use_nla_strips=True,
                     bake_anim_use_all_actions=False,
@@ -573,7 +586,7 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
     bl_label       = "Quick Export GLB"
     bl_description = (
         "Split by markers → export GLB → restore original action. "
-        "Each marker segment becomes a separate animation clip"
+        "Note: Forces entire scene export regardless of 'Selected Only'"
     )
 
     filename_ext  = ".glb"
@@ -608,6 +621,7 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 export_animation_mode='NLA_TRACKS',
                 export_apply=True,
                 export_rest_position_armature=False,
+                export_def_bones=scene.m2nla_only_deform_bones,
             )
 
             # IMPORTANT: Always use use_selection=False for glTF.
@@ -650,7 +664,7 @@ class MARKERNLA_OT_convert(Operator):
     bl_label   = "Markers → NLA"
     bl_description = (
         "Read timeline markers, split the active action into clips, "
-        "and push them as NLA strips"
+        "and push them as NLA strips (Simple stack)"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -732,7 +746,7 @@ class MARKERNLA_OT_merge(Operator):
     bl_label   = "NLA → Action"
     bl_description = (
         "Combine all NLA strips into one action, placing keyframes "
-        "at their original timeline positions"
+        "at their original timeline positions (Ignores blending/influence)"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -796,6 +810,7 @@ class MARKERNLA_OT_export_fbx(Operator, ExportHelper):
             bpy.ops.export_scene.fbx(
                 filepath=self.filepath,
                 use_selection=scene.m2nla_selected_only,
+                use_armature_deform_only=scene.m2nla_only_deform_bones,
                 bake_anim=True,
                 bake_anim_use_nla_strips=True,
                 bake_anim_use_all_actions=False,
@@ -831,6 +846,7 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
             export_format='GLB',
             export_animations=True,
             export_animation_mode='NLA_TRACKS',
+            export_def_bones=scene.m2nla_only_deform_bones,
         )
         try:
             bpy.ops.export_scene.gltf(
@@ -889,6 +905,25 @@ class MARKERNLA_OT_reset_frame_range(Operator):
         markers = scene.timeline_markers
         if markers:
             scene.frame_end = max(m.frame for m in markers)
+        return {'FINISHED'}
+
+
+class MARKERNLA_OT_delete_marker(Operator):
+    """Delete this marker"""
+    bl_idname  = "markernla.delete_marker"
+    bl_label   = "Delete Marker"
+    bl_description = "Delete this marker from the timeline"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    marker_name: StringProperty()
+    marker_frame: IntProperty()
+
+    def execute(self, context):
+        scene = context.scene
+        for m in scene.timeline_markers:
+            if m.name == self.marker_name and m.frame == self.marker_frame:
+                scene.timeline_markers.remove(m)
+                break
         return {'FINISHED'}
 
 
@@ -953,13 +988,22 @@ class MARKERNLA_PT_panel(Panel):
             col = box.column(align=True)
             for seg in segments:
                 row = col.row(align=True)
-                op = row.operator(
-                    "markernla.set_frame_range",
-                    text=seg['name'], icon='ACTION',
-                )
+                marker = seg['marker']
+
+                # Mute Toggle
+                icon = 'HIDE_ON' if getattr(marker, "m2nla_muted", False) else 'HIDE_OFF'
+                row.prop(marker, "m2nla_muted", text="", icon=icon, emboss=False)
+
+                op = row.operator("markernla.set_frame_range", text="", icon='PLAY')
                 op.frame_start = seg['start']
                 op.frame_end   = seg['end']
-                row.label(text=f"{seg['start']}–{seg['end']}  ({seg['length']}f)")
+
+                row.prop(marker, "name", text="")
+                row.label(text=f"{seg['start']}~{seg['end']} ({seg['length']}f)")
+
+                del_op = row.operator("markernla.delete_marker", text="", icon='TRASH', emboss=False)
+                del_op.marker_name = marker.name
+                del_op.marker_frame = marker.frame
 
             row = box.row(align=True)
             row.operator("markernla.reset_frame_range", icon='LOOP_BACK')
@@ -972,7 +1016,7 @@ class MARKERNLA_PT_panel(Panel):
         # ── Target info ───────────────────────────────
         box = layout.box()
         objs = context.selected_objects if scene.m2nla_selected_only else context.scene.objects
-        valid_objs = [o for o in objs if o.animation_data]
+        valid_objs = [o for o in objs if o.animation_data and (o.animation_data.action or o.animation_data.nla_tracks)]
         box.label(text=f"Targets: {len(valid_objs)} Objects", icon='OBJECT_DATA')
         
         if obj and obj.animation_data:
@@ -989,6 +1033,7 @@ class MARKERNLA_PT_panel(Panel):
         box = layout.box()
         box.label(text="Settings", icon='PREFERENCES')
         col = box.column(align=True)
+        col.prop(scene, "m2nla_only_deform_bones")
         col.prop(scene, "m2nla_boundary_keys")
         col.prop(scene, "m2nla_selected_only")
 
@@ -1049,6 +1094,7 @@ _classes = (
     MARKERNLA_OT_export_glb,
     MARKERNLA_OT_set_frame_range,
     MARKERNLA_OT_reset_frame_range,
+    MARKERNLA_OT_delete_marker,
     MARKERNLA_OT_cleanup,
     MARKERNLA_PT_panel,
 )
@@ -1059,12 +1105,23 @@ def register():
         bpy.utils.register_class(cls)
 
     S = bpy.types.Scene
+
+    bpy.types.TimelineMarker.m2nla_muted = BoolProperty(
+        name="Mute Clip",
+        description="Exclude this marker segment from Quick Export",
+        default=False,
+    )
+
+    S.m2nla_only_deform_bones = BoolProperty(
+        name="Only Deform Bones",
+        description="Export only deformation bones (optimizes game exports)",
+        default=False,
+    )
     S.m2nla_boundary_keys = BoolProperty(
         name="Create Boundary Keys",
         description=(
-            "Evaluate the curve at segment start/end and insert keyframes "
-            "there if they are missing.  Ensures each clip has clean "
-            "first and last poses"
+            "Evaluate curve at segment start/end and insert missing keys. "
+            "If off, unkeyed channels may reset to rest pose within segments"
         ),
         default=True,
     )
@@ -1099,6 +1156,7 @@ def unregister():
 
     S = bpy.types.Scene
     props = (
+        "m2nla_only_deform_bones",
         "m2nla_boundary_keys",
         "m2nla_clear_nla",
         "m2nla_unlink_source",
@@ -1108,6 +1166,9 @@ def unregister():
     for p in props:
         if hasattr(S, p):
             delattr(S, p)
+
+    if hasattr(bpy.types.TimelineMarker, "m2nla_muted"):
+        delattr(bpy.types.TimelineMarker, "m2nla_muted")
 
 
 if __name__ == "__main__":
