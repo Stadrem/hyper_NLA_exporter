@@ -586,7 +586,7 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
     bl_label       = "Quick Export GLB"
     bl_description = (
         "Split by markers → export GLB → restore original action. "
-        "Note: Forces entire scene export regardless of 'Selected Only'"
+        "Each marker segment becomes a separate animation take"
     )
 
     filename_ext  = ".glb"
@@ -624,28 +624,39 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 export_def_bones=scene.m2nla_only_deform_bones,
             )
 
-            # IMPORTANT: Always use use_selection=False for glTF.
-            # The glTF exporter in NLA_TRACKS mode needs the full
-            # scene hierarchy to correctly resolve skinned mesh
-            # parenting (flatten meshes out of armature nodes).
-            # Manipulating selection breaks this flattening and
-            # causes mesh duplication / misplaced nodes.
+            # FIX: Auto-select children if Selected Only is enabled so that 
+            # glTF exporter doesn't break skinned mesh hierarchy.
+            original_selection = [o for o in context.selected_objects]
+            if scene.m2nla_selected_only:
+                def select_recursive(obj):
+                    for child in obj.children:
+                        child.select_set(True)
+                        select_recursive(child)
+                for obj in original_selection:
+                    select_recursive(obj)
+
             try:
-                bpy.ops.export_scene.gltf(
-                    use_selection=False, **kwargs)
-            except TypeError:
                 try:
-                    kwargs.pop('export_animation_mode', None)
-                    kwargs.pop('export_rest_position_armature', None)
-                    kwargs['export_nla_strips'] = True
                     bpy.ops.export_scene.gltf(
-                        use_selection=False, **kwargs)
+                        use_selection=scene.m2nla_selected_only, **kwargs)
+                except TypeError:
+                    try:
+                        kwargs.pop('export_animation_mode', None)
+                        kwargs.pop('export_rest_position_armature', None)
+                        kwargs['export_nla_strips'] = True
+                        bpy.ops.export_scene.gltf(
+                            use_selection=scene.m2nla_selected_only, **kwargs)
+                    except Exception as exc:
+                        self.report({'ERROR'}, f"GLB export failed: {exc}")
+                        return {'CANCELLED'}
                 except Exception as exc:
                     self.report({'ERROR'}, f"GLB export failed: {exc}")
                     return {'CANCELLED'}
-            except Exception as exc:
-                self.report({'ERROR'}, f"GLB export failed: {exc}")
-                return {'CANCELLED'}
+            finally:
+                if scene.m2nla_selected_only:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    for obj in original_selection:
+                        obj.select_set(True)
 
         self.report(
             {'INFO'},
@@ -985,25 +996,40 @@ class MARKERNLA_PT_panel(Panel):
 
         segments = get_marker_segments(scene)
         if segments:
+            name_counts = {}
+            for seg in segments:
+                if not getattr(seg['marker'], "m2nla_muted", False):
+                    name = seg['marker'].name
+                    name_counts[name] = name_counts.get(name, 0) + 1
+            has_duplicates = any(c > 1 for c in name_counts.values())
+
             col = box.column(align=True)
             for seg in segments:
                 row = col.row(align=True)
                 marker = seg['marker']
 
                 # Mute Toggle
-                icon = 'HIDE_ON' if getattr(marker, "m2nla_muted", False) else 'HIDE_OFF'
+                is_muted = getattr(marker, "m2nla_muted", False)
+                icon = 'HIDE_ON' if is_muted else 'HIDE_OFF'
                 row.prop(marker, "m2nla_muted", text="", icon=icon, emboss=False)
 
                 op = row.operator("markernla.set_frame_range", text="", icon='PLAY')
                 op.frame_start = seg['start']
                 op.frame_end   = seg['end']
 
-                row.prop(marker, "name", text="")
+                name_row = row.row(align=True)
+                if not is_muted and name_counts.get(marker.name, 0) > 1:
+                    name_row.alert = True
+                name_row.prop(marker, "name", text="")
+
                 row.label(text=f"{seg['start']}~{seg['end']} ({seg['length']}f)")
 
                 del_op = row.operator("markernla.delete_marker", text="", icon='TRASH', emboss=False)
                 del_op.marker_name = marker.name
                 del_op.marker_frame = marker.frame
+
+            if has_duplicates:
+                box.label(text="⚠️ Duplicate unmuted marker names!", icon='ERROR')
 
             row = box.row(align=True)
             row.operator("markernla.reset_frame_range", icon='LOOP_BACK')

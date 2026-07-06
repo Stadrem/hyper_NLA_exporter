@@ -4,6 +4,9 @@
 
 블렌더(Blender)를 위한 전문적이고 비파괴적인 애니메이션 워크플로우 생산성 애드온입니다. 타임라인 상의 **마커(Marker)**를 기준으로 하나의 긴 통합 애니메이션을 여러 개의 독립된 클립(Take/Clip)으로 손쉽게 분할하여 FBX 또는 GLB 파일로 단 한 번의 클릭에 내보냅니다. 번거로운 NLA 트랙 수동 생성 과정을 완벽히 생략할 수 있습니다.
 
+> [!IMPORTANT]
+> **사용 목적 및 지원 범위**: 이 애드온은 **Unity 게임 엔진용 FBX Animation Take** 추출 및 **웹 기반 서비스용 GLB NLA 애니메이션** 추출을 위해 특화되어 제작되었습니다. 명시된 목적 외의 다른 용도나 환경에서의 정상적인 작동은 보장하지 않습니다.
+
 <p align="center">
   <img src="https://img.shields.io/badge/Blender-5.1+-306EE8?logo=blender&logoColor=white&style=for-the-badge" alt="Blender Version">
   <img src="https://img.shields.io/badge/Format-FBX%20%2F%20GLB-E04E39?style=for-the-badge" alt="Format support">
