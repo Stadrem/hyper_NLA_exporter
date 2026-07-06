@@ -31,8 +31,9 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ ▼ 🎬 Hyper NLA Exporter                  │
 ├──────────────────────────────────────────┤
 │ ┌─ Marker Segments ──────────────────┐   │
-│ │  Walk: 1 -> 60 (60f)               │   │
-│ │  Run: 61 -> 120 (60f)              │   │
+│ │ [Walk] 1–60 (60f)                  │   │
+│ │ [Run] 61–120 (60f)                 │   │
+│ │ [Reset Range]                      │   │
 │ └────────────────────────────────────┘   │
 │                                          │
 │ ┌─ Targets: 1 Objects ───────────────┐   │
@@ -52,7 +53,8 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 └──────────────────────────────────────────┘
 ```
 
-* **Marker Segments**: Displays parsed timeline markers, showing start, end, and duration.
+* **Marker Segments**: Displays parsed timeline markers. Click a segment's button to automatically set the timeline playback range to its start and end frames for a quick preview.
+  * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 0 to the last marker).
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
@@ -88,9 +90,10 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 
 ## ⚠️ Technical Notes & Constraints
 
-1. **GLB/glTF Hierarchy Flattening**:
+1. **GLB/glTF Hierarchy Flattening & Scale Preservation**:
    * The `Quick Export GLB` function forces `use_selection=False` internally.
    * This is required by Blender's glTF exporter to correctly resolve and flatten skeletal mesh parent-child hierarchies in NLA mode. Forcing selection breaks this, causing mesh duplication or misplaced attachments.
+   * It also automatically disables `export_rest_position_armature` to preserve the active pose bone scale (e.g. 100x scales), preventing joints from resetting to a 1.0 scale during export.
 2. **Blender 5.1 Layered Action Architecture**:
    * Fully compatible with Blender 5.x's Slot, Layer, Strip, and Channelbag systems to prevent naming conflicts across multiple characters.
 
