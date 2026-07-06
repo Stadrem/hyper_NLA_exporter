@@ -14,7 +14,7 @@ bl_info = {
 
 import bpy
 from contextlib import contextmanager
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ExportHelper
 from bpy_extras import anim_utils
@@ -97,7 +97,9 @@ def get_marker_segments(scene):
         return []
 
     segments = []
-    seg_start = scene.frame_start
+    
+    # Use 0 as the default start for the first clip, or the first marker's frame if it's negative
+    seg_start = min(0, markers[0].frame)
 
     for marker in markers:
         if marker.frame < seg_start:
@@ -851,6 +853,45 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+# ---- Segment preview (frame-range) ----------------------------------------
+
+class MARKERNLA_OT_set_frame_range(Operator):
+    """Set the playback range to this marker segment"""
+    bl_idname  = "markernla.set_frame_range"
+    bl_label   = "Preview Segment"
+    bl_description = "Set timeline Start/End to this segment's frame range"
+    bl_options = {'INTERNAL'}
+
+    frame_start: IntProperty()
+    frame_end:   IntProperty()
+
+    def execute(self, context):
+        scene = context.scene
+        scene.frame_start = self.frame_start
+        scene.frame_end   = self.frame_end
+        scene.frame_set(self.frame_start)
+        return {'FINISHED'}
+
+
+class MARKERNLA_OT_reset_frame_range(Operator):
+    """Reset playback range to the full animation length"""
+    bl_idname  = "markernla.reset_frame_range"
+    bl_label   = "Reset Range"
+    bl_description = (
+        "Restore the timeline range: Start = 0, "
+        "End = last marker frame"
+    )
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        scene = context.scene
+        scene.frame_start = 0
+        markers = scene.timeline_markers
+        if markers:
+            scene.frame_end = max(m.frame for m in markers)
+        return {'FINISHED'}
+
+
 # ---- Cleanup -------------------------------------------------------------
 
 class MARKERNLA_OT_cleanup(Operator):
@@ -912,8 +953,16 @@ class MARKERNLA_PT_panel(Panel):
             col = box.column(align=True)
             for seg in segments:
                 row = col.row(align=True)
-                row.label(text=seg['name'], icon='ACTION')
-                row.label(text=f"{seg['start']} → {seg['end']}  ({seg['length']}f)")
+                op = row.operator(
+                    "markernla.set_frame_range",
+                    text=seg['name'], icon='ACTION',
+                )
+                op.frame_start = seg['start']
+                op.frame_end   = seg['end']
+                row.label(text=f"{seg['start']}–{seg['end']}  ({seg['length']}f)")
+
+            row = box.row(align=True)
+            row.operator("markernla.reset_frame_range", icon='LOOP_BACK')
         else:
             col = box.column(align=True)
             col.label(text="Place markers on the timeline", icon='INFO')
@@ -998,6 +1047,8 @@ _classes = (
     MARKERNLA_OT_merge,
     MARKERNLA_OT_export_fbx,
     MARKERNLA_OT_export_glb,
+    MARKERNLA_OT_set_frame_range,
+    MARKERNLA_OT_reset_frame_range,
     MARKERNLA_OT_cleanup,
     MARKERNLA_PT_panel,
 )
