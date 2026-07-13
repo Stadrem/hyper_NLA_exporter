@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Hyper NLA Exporter",
     "author": "Kim Dongsu",
-    "version": (2, 0, 0),
+    "version": (2, 0, 1),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > K-Quick Tools",
     "description": (
@@ -34,8 +34,13 @@ def _get_channelbag(action, slot=None):
         for strip in layer.strips:
             if hasattr(strip, "channelbags"):
                 for cb in strip.channelbags:
-                    cb_slot = getattr(cb, 'slot', getattr(cb, 'action_slot', None))
-                    if slot is None or cb_slot == slot:
+                    cb_slot = getattr(cb, 'slot',
+                                      getattr(cb, 'action_slot', None))
+                    cb_handle = getattr(cb, 'slot_handle', None)
+                    slot_handle = getattr(slot, 'handle', None)
+                    if (slot is None or cb_slot == slot
+                            or (slot_handle is not None
+                                and cb_handle == slot_handle)):
                         return cb
     return None
 
@@ -51,12 +56,22 @@ def _ensure_channelbag(action, datablock=None):
     slot = None
     if hasattr(action, 'slots'):
         if datablock:
-            slot = action.slots.get(datablock.name)
+            # ActionSlots are keyed by identifiers such as "OBRig", not by
+            # the datablock's bare name. Match the user-facing display name
+            # and ID type instead of constructing Blender's ID prefix.
+            slot = next((candidate for candidate in action.slots
+                         if (getattr(candidate, 'display_name', None)
+                             == datablock.name)
+                         and (getattr(candidate, 'target_id_type', None)
+                              in {None, datablock.id_type})), None)
             if not slot:
                 if hasattr(action.slots, 'new_for_id'):
                     slot = action.slots.new_for_id(datablock)
                 else:
-                    slot = action.slots.new(id_type='OBJECT', name=datablock.name)
+                    slot = action.slots.new(
+                        id_type=datablock.id_type,
+                        name=datablock.name,
+                    )
         else:
             if not action.slots:
                 action.slots.new(id_type='OBJECT', name=action.name)
@@ -98,8 +113,9 @@ def get_marker_segments(scene):
 
     segments = []
     
-    # Use 0 as the default start for the first clip, or the first marker's frame if it's negative
-    seg_start = min(0, markers[0].frame)
+    # Clips normally start at frame 1. Preserve negative/earlier marker ranges
+    # for scenes that intentionally animate before frame 1.
+    seg_start = min(1, markers[0].frame)
 
     for marker in markers:
         if marker.frame < seg_start:
@@ -121,14 +137,16 @@ def get_marker_segments(scene):
 # ============================================================
 
 def copy_segment_to_action(source_action, dst_action, start, end,
-                           create_boundaries=True, datablock=None):
+                           create_boundaries=True, datablock=None,
+                           source_slot=None):
     """Copy keyframes from *source_action* within [start, end] into *dst_action*.
 
     Keyframes are re-timed so the clip starts at frame 0.
-    *datablock* – if given, a slot is created/used for this ID.
+    *datablock* – if given, a destination slot is created/used for this ID.
+    *source_slot* selects the correct Channelbag in a shared Layered Action.
     Returns True if any keyframes were added.
     """
-    src_fcurves = _get_fcurves(source_action)
+    src_fcurves = _get_fcurves(source_action, source_slot)
     if not src_fcurves:
         return False
 
@@ -240,6 +258,7 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
             #   strip.action_frame_start / action_frame_end – action range used
             #   strip.scale – time scale factor
             act_start = getattr(strip, 'action_frame_start', 0.0)
+            act_end   = getattr(strip, 'action_frame_end', act_start)
             scale     = getattr(strip, 'scale', 1.0)
             if scale == 0:
                 scale = 1.0
@@ -247,7 +266,8 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
 
             strip_infos.append((strip.name, strip.frame_start, strip.frame_end))
 
-            src_fcurves = _get_fcurves(strip.action)
+            strip_slot = getattr(strip, 'action_slot', None)
+            src_fcurves = _get_fcurves(strip.action, strip_slot)
 
             for src_fc in src_fcurves:
                 if not src_fc.keyframe_points:
@@ -273,6 +293,11 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
                 dst_fc = dst_map[key]
 
                 for src_kp in src_fc.keyframe_points:
+                    # A strip can use only part of its Action. Do not leak
+                    # keys from outside that selected Action range.
+                    if not act_start <= src_kp.co[0] <= act_end:
+                        continue
+
                     # Convert action-local frame to timeline frame:
                     #   timeline_frame = strip.frame_start
                     #                  + (action_frame - action_frame_start) * scale
@@ -315,7 +340,8 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
 #  Static-transform preservation for NLA export
 # ============================================================
 
-def _preserve_static_transforms(dst_action, obj, src_action):
+def _preserve_static_transforms(dst_action, obj, src_action,
+                                source_slot=None):
     """Inject constant keyframes for un-keyframed pose-bone transforms.
 
     When an action is pushed to NLA and the original is detached, Blender
@@ -333,7 +359,7 @@ def _preserve_static_transforms(dst_action, obj, src_action):
 
     # Collect channels already present in the source action
     src_channels = set()
-    for fc in _get_fcurves(src_action):
+    for fc in _get_fcurves(src_action, source_slot):
         src_channels.add((fc.data_path, fc.array_index))
 
     # Collect channels already present in the destination action
@@ -413,7 +439,8 @@ def _temporary_nla_split(objects, scene):
             'anim': anim,
             'original_action': anim.action,
             'original_slot': getattr(anim, 'action_slot', None),
-            'temp_tracks': []
+            'temp_tracks': [],
+            'temp_actions': [],
         })
 
     segments = get_marker_segments(scene)
@@ -427,73 +454,76 @@ def _temporary_nla_split(objects, scene):
     # Calculate max segment length to cover all animations
     max_len = max((seg['length'] for seg in segments), default=1)
 
-    for state in object_states:
-        obj = state['obj']
-        anim = state['anim']
-        original_action = state['original_action']
-
-        for seg in segments:
-            if getattr(seg['marker'], "m2nla_muted", False):
-                continue
-
-            # Action name includes object prefix to avoid collisions
-            # across different rigs. NLA Track name stays as marker name
-            # (that's what glTF uses as the animation clip name).
-            action_name = f"{obj.name}_{seg['name']}"
-            new_action = bpy.data.actions.new(name=action_name)
-            new_action.use_fake_user = True
-            
-            did_copy = copy_segment_to_action(
-                original_action, new_action, seg['start'], seg['end'],
-                create_boundaries=boundary_keys,
-                datablock=obj,
-            )
-            # Inject un-keyframed pose-bone transforms (e.g. Root scale)
-            # so they survive NLA rest-pose evaluation.
-            _preserve_static_transforms(new_action, obj, original_action)
-            
-            # Check if the action has any content (animated keys or static transforms)
-            has_content = did_copy or bool(_get_fcurves(new_action))
-
-            if has_content:
-                slot = None
-                if hasattr(new_action, 'slots'):
-                    slot = new_action.slots.get(obj.name)
-
-                track = anim.nla_tracks.new()
-                track.name = seg['name']
-                strip = track.strips.new(
-                    name=seg['name'],
-                    start=1,  # Always start at frame 1 for the exported clip
-                    action=new_action,
-                )
-                strip.name = seg['name']
-                if slot and hasattr(strip, 'action_slot'):
-                    strip.action_slot = slot
-                state['temp_tracks'].append((track, new_action))
-                clip_names.add(seg['name'])
-            else:
-                bpy.data.actions.remove(new_action)
-
-        # Detach the source action so the NLA strips are what gets exported.
-        # FIX: We intentionally leave the original action active! 
-        # Exporters evaluate the Bind Pose with all NLA tracks overlapping. By leaving 
-        # the original action active, it overrides the NLA stack for the Bind Pose, 
-        # preserving the correct scale (e.g. 100x). Both FBX and GLB exporters will 
-        # still correctly solo and bake the NLA strips while ignoring the active action.
-        # state['anim'].action = None
-
-    # Temporarily set scene range to cover the longest segment from frame 1
-    scene.frame_start = 1
-    scene.frame_end = max_len
-
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    if depsgraph:
-        depsgraph.update()
-    current_frame = scene.frame_current
-    scene.frame_set(current_frame)
-
     try:
+        for state in object_states:
+            obj = state['obj']
+            anim = state['anim']
+            original_action = state['original_action']
+            original_slot = state['original_slot']
+
+            for seg in segments:
+                if getattr(seg['marker'], "m2nla_muted", False):
+                    continue
+
+                # Action name includes object prefix to avoid collisions
+                # across different rigs. NLA Track name stays as marker name
+                # (that's what glTF uses as the animation clip name).
+                action_name = f"{obj.name}_{seg['name']}"
+                new_action = bpy.data.actions.new(name=action_name)
+                new_action.use_fake_user = True
+                state['temp_actions'].append(new_action)
+
+                did_copy = copy_segment_to_action(
+                    original_action, new_action, seg['start'], seg['end'],
+                    create_boundaries=boundary_keys,
+                    datablock=obj,
+                    source_slot=original_slot,
+                )
+                # Inject un-keyframed pose-bone transforms (e.g. Root scale)
+                # so they survive NLA rest-pose evaluation.
+                _preserve_static_transforms(
+                    new_action, obj, original_action,
+                    source_slot=original_slot,
+                )
+
+                # Check if the action has any content (animated keys or
+                # static transforms).
+                has_content = did_copy or bool(_get_fcurves(new_action))
+
+                if has_content:
+                    dst_cb = _get_channelbag(new_action)
+                    slot = getattr(dst_cb, 'slot', None)
+
+                    track = anim.nla_tracks.new()
+                    state['temp_tracks'].append(track)
+                    track.name = seg['name']
+                    strip = track.strips.new(
+                        name=seg['name'],
+                        start=1,
+                        action=new_action,
+                    )
+                    strip.name = seg['name']
+                    if slot and hasattr(strip, 'action_slot'):
+                        strip.action_slot = slot
+                    clip_names.add(seg['name'])
+                else:
+                    state['temp_actions'].remove(new_action)
+                    new_action.use_fake_user = False
+                    bpy.data.actions.remove(new_action)
+
+            # Keep the original action active. The FBX and glTF exporters
+            # temporarily detach it while soloing NLA strips, then restore it.
+
+        # Temporarily set scene range to cover the longest segment from frame 1
+        scene.frame_start = 1
+        scene.frame_end = max_len
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        if depsgraph:
+            depsgraph.update()
+        current_frame = scene.frame_current
+        scene.frame_set(current_frame)
+
         yield list(clip_names)
     finally:
         # Restore scene frame range
@@ -502,18 +532,20 @@ def _temporary_nla_split(objects, scene):
 
         for state in object_states:
             anim = state['anim']
-            for track, action in state['temp_tracks']:
-                anim.nla_tracks.remove(track)
-                action.use_fake_user = False
-                action.user_clear()
+            for track in reversed(state['temp_tracks']):
                 try:
-                    bpy.data.actions.remove(action)
-                except Exception:
-                    # Force-remove even if references linger
-                    try:
-                        bpy.data.actions.remove(action, do_unlink=True)
-                    except Exception:
-                        pass
+                    anim.nla_tracks.remove(track)
+                except (ReferenceError, RuntimeError):
+                    pass
+
+            for action in reversed(state['temp_actions']):
+                if action.name not in bpy.data.actions:
+                    continue
+                action.use_fake_user = False
+                try:
+                    bpy.data.actions.remove(action, do_unlink=True)
+                except (ReferenceError, RuntimeError):
+                    pass
 
             anim.action = state['original_action']
             if state['original_slot'] is not None:
@@ -718,12 +750,20 @@ class MARKERNLA_OT_convert(Operator):
                     source, new_action, seg['start'], seg['end'],
                     create_boundaries=scene.m2nla_boundary_keys,
                     datablock=obj,
+                    source_slot=getattr(obj.animation_data,
+                                        'action_slot', None),
                 )
-                
-                if did_copy:
-                    slot = None
-                    if hasattr(new_action, 'slots'):
-                        slot = new_action.slots.get(obj.name)
+
+                _preserve_static_transforms(
+                    new_action, obj, source,
+                    source_slot=getattr(obj.animation_data,
+                                        'action_slot', None),
+                )
+                has_content = did_copy or bool(_get_fcurves(new_action))
+
+                if has_content:
+                    dst_cb = _get_channelbag(new_action)
+                    slot = getattr(dst_cb, 'slot', None)
 
                     track = obj.animation_data.nla_tracks.new()
                     track.name = seg['name']
@@ -756,8 +796,8 @@ class MARKERNLA_OT_merge(Operator):
     bl_idname  = "markernla.merge"
     bl_label   = "NLA → Action"
     bl_description = (
-        "Combine all NLA strips into one action, placing keyframes "
-        "at their original timeline positions (Ignores blending/influence)"
+        "Combine simple NLA strips into one action at their timeline "
+        "positions (ignores repeat, reverse, blending, influence, and modifiers)"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -905,14 +945,14 @@ class MARKERNLA_OT_reset_frame_range(Operator):
     bl_idname  = "markernla.reset_frame_range"
     bl_label   = "Reset Range"
     bl_description = (
-        "Restore the timeline range: Start = 0, "
+        "Restore the timeline range: Start = 1, "
         "End = last marker frame"
     )
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
         scene = context.scene
-        scene.frame_start = 0
+        scene.frame_start = 1
         markers = scene.timeline_markers
         if markers:
             scene.frame_end = max(m.frame for m in markers)

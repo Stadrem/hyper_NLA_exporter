@@ -61,12 +61,12 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Mute Toggle (Eye Icon)*: Exclude specific clips from Quick Export without deleting the marker.
   * *Preview (Play Icon)*: Set the timeline playback range to this segment for a quick preview.
   * *Rename/Delete*: Rename markers inline via the text field or delete them instantly via the trash icon.
-  * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 0 to the last marker).
+  * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 1 to the last marker).
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
-  * *Selected Only*: Processes only active selection.
+  * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
 * **Quick Export (Marker Split)**:
   * *FBX*: Splits and exports as separate takes in a single `.fbx` file.
   * *GLB*: Splits and exports as separate clips in a single `.glb` file.
@@ -99,11 +99,12 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 ## ⚠️ Technical Notes & Constraints
 
 1. **GLB/glTF Hierarchy Flattening & Scale Preservation**:
-   * The `Quick Export GLB` function forces `use_selection=False` internally.
-   * This is required by Blender's glTF exporter to correctly resolve and flatten skeletal mesh parent-child hierarchies in NLA mode. Forcing selection breaks this, causing mesh duplication or misplaced attachments.
+   * With `Selected Only` enabled, Quick Export GLB temporarily selects every descendant of the selected objects and exports with `use_selection=True`. The original selection is restored after export.
+   * Select the rig's root object to include its skinned meshes and attachments, preventing missing hierarchy nodes, duplicated meshes, or misplaced attachments in NLA track mode.
+   * With `Selected Only` disabled, the entire scene is exported.
    * It also automatically disables `export_rest_position_armature` to preserve the active pose bone scale (e.g. 100x scales), preventing joints from resetting to a 1.0 scale during export.
 2. **Blender 5.1 Layered Action Architecture**:
-   * Fully compatible with Blender 5.x's Slot, Layer, Strip, and Channelbag systems to prevent naming conflicts across multiple characters.
+   * Supports Blender 5.x's Slot, Layer, Strip, and Channelbag systems. When multiple objects share one Action, only the F-Curves from each object's assigned Action Slot are split.
 
 ---
 
