@@ -21,6 +21,8 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 * 🚀 **One-Click Quick Export**: Automatically split, retime to frame 1, export, and clean up temporary tracks in a single operation.
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
 * 📐 **Boundary Key Evaluation**: Evaluates curve values at segment starts/ends to insert missing boundaries, preserving perfect poses across splits.
+* ✅ **Export Preflight**: Checks duplicate or blank clip names, invalid markers, missing Action Slots/F-Curves, existing NLA tracks, empty clip ranges, and skinned meshes outside the export selection.
+* 📂 **Open Export Folder**: Opens the containing folder automatically after a successful FBX/GLB export.
 * ⚙️ **Advanced Manual NLA Tools**: Easily convert timeline markers to permanent NLA tracks, merge NLA tracks back into a single Action, or run selective cleanups.
 
 ---
@@ -47,9 +49,11 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ │ [ ] Only Deform Bones              │   │
 │ │ [x] Create Boundary Keys           │   │
 │ │ [x] Selected Only                  │   │
+│ │ [x] Open Folder After Export       │   │
 │ └────────────────────────────────────┘   │
 │                                          │
 │ ┌─ Quick Export (Marker Split) ──────┐   │
+│ │    [Check FBX]      [Check GLB]     │   │
 │ │      [   FBX   ]      [   GLB   ]      │   │
 │ └────────────────────────────────────┘   │
 │                                          │
@@ -67,7 +71,9 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
   * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
+  * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
+  * *Check FBX / Check GLB*: Shows a popup with marker, Action Slot, keyframe, and hierarchy checks. Errors block Quick Export; warnings are reported but do not block it.
   * *FBX*: Splits and exports as separate takes in a single `.fbx` file.
   * *GLB*: Splits and exports as separate clips in a single `.glb` file.
 * **Manual NLA Tools (Foldout)**: Contains permanent conversion actions (`Markers → NLA` and `NLA → Action`), existing NLA exporters, and cleanups.

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Hyper NLA Exporter",
     "author": "Kim Dongsu",
-    "version": (2, 0, 1),
+    "version": (2, 1, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > K-Quick Tools",
     "description": (
@@ -12,9 +12,11 @@ bl_info = {
 }
 
 
+import os
+
 import bpy
 from contextlib import contextmanager
-from bpy.props import BoolProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ExportHelper
 from bpy_extras import anim_utils
@@ -113,9 +115,8 @@ def get_marker_segments(scene):
 
     segments = []
     
-    # Clips normally start at frame 1. Preserve negative/earlier marker ranges
-    # for scenes that intentionally animate before frame 1.
-    seg_start = min(1, markers[0].frame)
+    # Export clips use the standard 1-based animation range.
+    seg_start = 1
 
     for marker in markers:
         if marker.frame < seg_start:
@@ -130,6 +131,174 @@ def get_marker_segments(scene):
         seg_start = marker.frame + 1
 
     return segments
+
+
+# ============================================================
+#  Export validation / completion helpers
+# ============================================================
+
+def _get_quick_export_targets(context):
+    """Return objects with an active Action in the current export scope."""
+    scene = context.scene
+    objects = (context.selected_objects if scene.m2nla_selected_only
+               else scene.objects)
+    return [obj for obj in objects
+            if obj.animation_data and obj.animation_data.action]
+
+
+def _with_descendants(objects):
+    """Return *objects* plus every child below them."""
+    result = set(objects)
+    pending = list(objects)
+    while pending:
+        obj = pending.pop()
+        for child in obj.children:
+            if child not in result:
+                result.add(child)
+                pending.append(child)
+    return result
+
+
+def collect_export_issues(context, export_format='FBX'):
+    """Return preflight issues as ``(severity, message)`` tuples."""
+    scene = context.scene
+    issues = []
+    segments = [seg for seg in get_marker_segments(scene)
+                if not getattr(seg['marker'], 'm2nla_muted', False)]
+
+    invalid_markers = [marker for marker in scene.timeline_markers
+                       if (not getattr(marker, 'm2nla_muted', False)
+                           and marker.frame < 1)]
+    if invalid_markers:
+        names = ", ".join(marker.name or "<unnamed>"
+                          for marker in invalid_markers[:3])
+        issues.append((
+            'ERROR',
+            f"Markers before frame 1 are not exportable: {names}",
+        ))
+
+    if not segments:
+        issues.append(('ERROR', "No unmuted marker clips to export"))
+    else:
+        blank_names = [seg for seg in segments if not seg['name'].strip()]
+        if blank_names:
+            issues.append(('ERROR', "One or more clip names are empty"))
+
+        name_counts = {}
+        for seg in segments:
+            name = seg['name'].strip()
+            name_counts[name] = name_counts.get(name, 0) + 1
+        duplicates = sorted(name for name, count in name_counts.items()
+                            if name and count > 1)
+        if duplicates:
+            issues.append((
+                'ERROR',
+                "Duplicate clip names: " + ", ".join(duplicates[:4]),
+            ))
+
+    scoped_objects = list(context.selected_objects
+                          if scene.m2nla_selected_only else scene.objects)
+    if scene.m2nla_selected_only and not scoped_objects:
+        issues.append(('ERROR', "Selected Only is on, but nothing is selected"))
+
+    targets = _get_quick_export_targets(context)
+    if not targets:
+        issues.append(('ERROR', "No target object has an active Action"))
+
+    for obj in targets:
+        anim = obj.animation_data
+        action = anim.action
+        source_slot = getattr(anim, 'action_slot', None)
+        if len(action.slots) > 1 and source_slot is None:
+            issues.append((
+                'ERROR',
+                f"{obj.name}: shared Action has no assigned slot",
+            ))
+            continue
+
+        fcurves = _get_fcurves(action, source_slot)
+        if not fcurves:
+            issues.append((
+                'ERROR',
+                f"{obj.name}: assigned Action slot has no F-Curves",
+            ))
+            continue
+
+        if anim.nla_tracks:
+            issues.append((
+                'WARNING',
+                f"{obj.name}: existing NLA tracks may also be exported",
+            ))
+
+        for seg in segments:
+            has_key = any(
+                seg['start'] <= point.co[0] <= seg['end']
+                for fcurve in fcurves
+                for point in fcurve.keyframe_points
+            )
+            if not has_key:
+                issues.append((
+                    'WARNING',
+                    f"{obj.name} / {seg['name']}: no keys inside clip range",
+                ))
+
+    if scene.m2nla_selected_only and targets:
+        included = (set(scoped_objects) if export_format == 'FBX'
+                    else _with_descendants(scoped_objects))
+        target_armatures = {obj for obj in targets
+                            if obj.type == 'ARMATURE'}
+        for obj in scene.objects:
+            if obj.type != 'MESH' or obj in included:
+                continue
+            uses_target_armature = any(
+                modifier.type == 'ARMATURE'
+                and modifier.object in target_armatures
+                for modifier in obj.modifiers
+            )
+            if uses_target_armature:
+                issues.append((
+                    'WARNING',
+                    f"{obj.name}: skinned mesh is outside export selection",
+                ))
+
+    return issues
+
+
+def _preflight_allows_export(operator, context, export_format):
+    """Report preflight results and return False when errors block export."""
+    issues = collect_export_issues(context, export_format)
+    errors = [message for severity, message in issues
+              if severity == 'ERROR']
+    warnings = [message for severity, message in issues
+                if severity == 'WARNING']
+    if errors:
+        operator.report(
+            {'ERROR'},
+            f"Preflight failed ({len(errors)}): {errors[0]}",
+        )
+        return False
+    if warnings:
+        operator.report(
+            {'WARNING'},
+            f"Preflight warnings ({len(warnings)}): {warnings[0]}",
+        )
+    return True
+
+
+def _open_export_folder(scene, filepath, operator):
+    """Open the exported file's containing folder when enabled."""
+    if not scene.m2nla_open_folder:
+        return
+    folder = os.path.dirname(bpy.path.abspath(filepath))
+    if not os.path.isdir(folder):
+        operator.report({'WARNING'}, f"Export folder not found: {folder}")
+        return
+    try:
+        result = bpy.ops.wm.path_open(filepath=folder)
+        if 'FINISHED' not in result:
+            operator.report({'WARNING'}, f"Could not open folder: {folder}")
+    except Exception as exc:
+        operator.report({'WARNING'}, f"Could not open export folder: {exc}")
 
 
 # ============================================================
@@ -559,6 +728,60 @@ def _temporary_nla_split(objects, scene):
 #  Operators  – Quick Export (main workflow)
 # ============================================================
 
+class MARKERNLA_OT_validate_export(Operator):
+    """Validate marker clips and export targets before Quick Export"""
+    bl_idname = "markernla.validate_export"
+    bl_label = "Export Preflight"
+    bl_description = "Check clip names, Action slots, keys, NLA, and hierarchy"
+    bl_options = {'INTERNAL'}
+
+    export_format: EnumProperty(
+        name="Format",
+        items=(
+            ('FBX', "FBX", "Validate the current FBX export scope"),
+            ('GLB', "GLB", "Validate the current GLB export scope"),
+        ),
+        default='FBX',
+    )
+
+    def execute(self, context):
+        issues = collect_export_issues(context, self.export_format)
+        error_count = sum(severity == 'ERROR'
+                          for severity, _message in issues)
+        warning_count = sum(severity == 'WARNING'
+                            for severity, _message in issues)
+
+        def draw_popup(menu, _context):
+            layout = menu.layout
+            if not issues:
+                layout.label(
+                    text="Ready to export — no issues found",
+                    icon='CHECKMARK',
+                )
+                return
+            for severity, message in issues:
+                icon = 'CANCEL' if severity == 'ERROR' else 'ERROR'
+                row = layout.row()
+                row.alert = severity == 'ERROR'
+                row.label(text=message, icon=icon)
+
+        title = (f"{self.export_format} Preflight — "
+                 f"{error_count} errors, {warning_count} warnings")
+        # Blender can crash when popup_menu is requested in --background
+        # mode. Interactive sessions still get the full issue list popup.
+        if not bpy.app.background:
+            context.window_manager.popup_menu(
+                draw_popup, title=title, icon='INFO')
+
+        if error_count:
+            self.report({'ERROR'}, title)
+        elif warning_count:
+            self.report({'WARNING'}, title)
+        else:
+            self.report({'INFO'}, f"{self.export_format} is ready to export")
+        return {'FINISHED'}
+
+
 class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
     """One-click marker-split FBX export – original animation untouched"""
     bl_idname      = "markernla.quick_export_fbx"
@@ -577,8 +800,9 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
 
     def execute(self, context):
         scene = context.scene
-        all_objs = list(context.selected_objects if scene.m2nla_selected_only else context.scene.objects)
-        anim_objs = [o for o in all_objs if o.animation_data and o.animation_data.action]
+        if not _preflight_allows_export(self, context, 'FBX'):
+            return {'CANCELLED'}
+        anim_objs = _get_quick_export_targets(context)
 
         if not anim_objs:
             self.report({'ERROR'}, "No valid objects with animation data found")
@@ -609,6 +833,7 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
             {'INFO'},
             f"Exported {len(clip_names)} clips → {self.filepath}"
         )
+        _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
 
@@ -630,12 +855,9 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
 
     def execute(self, context):
         scene = context.scene
-        objs = list(
-            context.selected_objects if scene.m2nla_selected_only
-            else context.scene.objects
-        )
-        anim_objs = [o for o in objs
-                     if o.animation_data and o.animation_data.action]
+        if not _preflight_allows_export(self, context, 'GLB'):
+            return {'CANCELLED'}
+        anim_objs = _get_quick_export_targets(context)
 
         if not anim_objs:
             self.report({'ERROR'}, "No valid objects with animation data found")
@@ -694,6 +916,7 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             {'INFO'},
             f"Exported {len(clip_names)} clips → {self.filepath}"
         )
+        _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
 
@@ -874,6 +1097,7 @@ class MARKERNLA_OT_export_fbx(Operator, ExportHelper):
             return {'CANCELLED'}
 
         self.report({'INFO'}, f"Exported FBX → {self.filepath}")
+        _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
 
@@ -917,6 +1141,7 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
             return {'CANCELLED'}
 
         self.report({'INFO'}, f"Exported GLB → {self.filepath}")
+        _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
 
@@ -1102,12 +1327,21 @@ class MARKERNLA_PT_panel(Panel):
         col.prop(scene, "m2nla_only_deform_bones")
         col.prop(scene, "m2nla_boundary_keys")
         col.prop(scene, "m2nla_selected_only")
+        col.prop(scene, "m2nla_open_folder")
 
         layout.separator()
 
         # ── Quick Export (main feature) ──────────────────────
         box = layout.box()
         box.label(text="Quick Export (Marker Split)", icon='EXPORT')
+        row = box.row(align=True)
+        op = row.operator("markernla.validate_export",
+                          text="Check FBX", icon='CHECKMARK')
+        op.export_format = 'FBX'
+        op = row.operator("markernla.validate_export",
+                          text="Check GLB", icon='CHECKMARK')
+        op.export_format = 'GLB'
+
         col = box.column(align=True)
         col.scale_y = 1.6
         row = col.row(align=True)
@@ -1152,6 +1386,7 @@ class MARKERNLA_PT_panel(Panel):
 # ============================================================
 
 _classes = (
+    MARKERNLA_OT_validate_export,
     MARKERNLA_OT_quick_export_fbx,
     MARKERNLA_OT_quick_export_glb,
     MARKERNLA_OT_convert,
@@ -1206,7 +1441,15 @@ def register():
     )
     S.m2nla_selected_only = BoolProperty(
         name="Selected Only",
-        description="Export only selected objects",
+        description=(
+            "Export only selected objects; Quick GLB also includes all "
+            "descendants of the selection"
+        ),
+        default=True,
+    )
+    S.m2nla_open_folder = BoolProperty(
+        name="Open Folder After Export",
+        description="Open the containing folder after a successful export",
         default=True,
     )
     S.m2nla_show_nla_tools = BoolProperty(
@@ -1227,6 +1470,7 @@ def unregister():
         "m2nla_clear_nla",
         "m2nla_unlink_source",
         "m2nla_selected_only",
+        "m2nla_open_folder",
         "m2nla_show_nla_tools",
     )
     for p in props:
