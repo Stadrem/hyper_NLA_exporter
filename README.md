@@ -68,12 +68,14 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 1 to the last marker).
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
+  * *Export Path*: Sets the FBX/GLB output folder. The default `//Export/` means an `Export` folder beside the saved `.blend` file; the folder is created automatically.
+  * *Auto Export*: Skips the save dialog and overwrites `<blend filename>.fbx` or `.glb` directly in Export Path. The `.blend` file must be saved first. Turn this off to use the normal Save As dialog.
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
   * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
-  * *Check FBX / Check GLB*: Shows a popup with marker, Action Slot, keyframe, and hierarchy checks. Errors block Quick Export; warnings are reported but do not block it.
+  * *Check FBX / Check GLB*: Performs a temporary NLA split and shows expected/created track counts plus per-object `✓`, `⚠`, or `✗` results for every clip. It validates Action/Strip content, names, frame ranges, Action Slots, keyframes, and hierarchy, then removes all temporary data. Hard errors also block Quick Export.
   * *FBX*: Splits and exports as separate takes in a single `.fbx` file.
   * *GLB*: Splits and exports as separate clips in a single `.glb` file.
 * **Manual NLA Tools (Foldout)**: Contains permanent conversion actions (`Markers → NLA` and `NLA → Action`), existing NLA exporters, and cleanups.
@@ -98,7 +100,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
    * **Marker Frame** = End frame of the clip.
    * *Example*: Marker `Walk` at frame 60 and `Run` at frame 120 splits the timeline into `1-60` (Walk) and `61-120` (Run).
 4. Open the N-Panel, click **K-Quick Tools** > **Hyper NLA Exporter**.
-5. Click **FBX** or **GLB** under Quick Export and select your save location. Your animations are instantly split, retimed from frame 1, and exported!
+5. Set **Export Path** if needed. Enable **Auto Export** for direct overwrite export, or leave it off to use the normal Save As dialog, then click **FBX** or **GLB**.
 
 ---
 

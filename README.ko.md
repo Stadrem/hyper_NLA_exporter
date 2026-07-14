@@ -68,12 +68,14 @@
   * *Reset Range (구간 초기화)*: 타임라인 재생 범위를 1프레임부터 마지막 마커 프레임까지 전체 애니메이션 길이로 복원합니다.
 * **Targets**: 애니메이션 추출 대상 오브젝트의 총 수와 현재 선택된 활성 액션의 이름을 표시합니다.
 * **Settings (설정)**:
+  * *Export Path*: FBX/GLB 출력 폴더를 지정합니다. 기본값 `//Export/`는 저장된 `.blend` 파일 옆의 `Export` 폴더를 의미하며, 폴더가 없으면 자동으로 생성합니다.
+  * *Auto Export*: 저장 창을 생략하고 Export Path에 `<blend 파일명>.fbx` 또는 `.glb`로 즉시 덮어씁니다. 먼저 `.blend` 파일을 저장해야 합니다. 일반 Save As 창을 사용하려면 끕니다.
   * *Only Deform Bones*: 체크 시 컨트롤러용 뼈들을 제외하고, 실제 변형에 관여하는 스키닝용 뼈대(Deform Bone)만 내보내어 게임 엔진용 에셋 용량을 최적화합니다.
   * *Create Boundary Keys*: 활성화 시 F-Curve의 프레임 경계 구간에 키프레임을 삽입하여 프레임 유실로 인한 자세 흐트러짐을 방지합니다.
   * *Selected Only*: 체크 시 선택된 오브젝트만 추출 대상으로 삼습니다. GLB 내보내기에서는 스킨드 메시 계층이 빠지지 않도록 선택된 오브젝트의 모든 하위 오브젝트도 임시로 포함합니다.
   * *Open Folder After Export*: 내보내기에 성공하면 결과 파일이 있는 폴더를 엽니다.
 * **Quick Export (Marker Split)**:
-  * *Check FBX / Check GLB*: 현재 마커, Action Slot, 키프레임 및 내보내기 계층을 검사해 팝업으로 표시합니다. 오류는 Quick Export를 차단하고 경고는 알린 뒤 계속 진행할 수 있습니다.
+  * *Check FBX / Check GLB*: 임시 NLA 분할을 실제로 수행한 뒤 예상/생성 트랙 수와 모든 클립의 오브젝트별 `✓`, `⚠`, `✗` 결과를 팝업으로 표시합니다. Action/Strip 내용, 이름, 프레임 범위, Action Slot, 키프레임 및 내보내기 계층을 검사하고 임시 데이터는 즉시 제거합니다. 하드 오류는 Quick Export도 차단합니다.
   * *FBX*: 마커별로 애니메이션 테이크(Take)를 나눈 단일 `.fbx` 파일을 내보냅니다.
   * *GLB*: 마커별로 애니메이션 클립(Clip)을 나눈 단일 `.glb` 파일을 내보냅니다.
 * **Manual NLA Tools (수동 도구 foldout)**: 마커 $\rightarrow$ NLA 영구 변환, NLA $\rightarrow$ Action 통합 액션 복구, 기존 NLA 수동 내보내기 및 트랙 전체 삭제 도구를 담고 있습니다.
@@ -98,7 +100,7 @@
    * **마커 위치(프레임)** = 해당 클립의 끝 프레임.
    * *예시*: 시작 프레임이 1일 때, 60프레임에 `Walk` 마커, 120프레임에 `Run` 마커를 배치하면 각각 `1-60` 구간(Walk), `61-120` 구간(Run)으로 자동 인지됩니다.
 4. 사이드바 N패널에서 **K-Quick Tools** > **Hyper NLA Exporter** 패널을 엽니다.
-5. Quick Export 섹션의 **FBX** 혹은 **GLB** 버튼을 누르고 내보낼 위치를 지정하면 즉시 자동 분할 리타이밍 렌더링이 수행됩니다!
+5. 필요하면 **Export Path**를 지정합니다. 즉시 덮어쓰려면 **Auto Export**를 켜고, 일반 Save As 창을 쓰려면 끈 상태에서 Quick Export의 **FBX** 또는 **GLB**를 누릅니다.
 
 ---
 
