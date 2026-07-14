@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Hyper NLA Exporter",
     "author": "Kim Dongsu",
-    "version": (2, 1, 0),
+    "version": (2, 4, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > K-Quick Tools",
     "description": (
@@ -299,6 +299,190 @@ def _open_export_folder(scene, filepath, operator):
             operator.report({'WARNING'}, f"Could not open folder: {folder}")
     except Exception as exc:
         operator.report({'WARNING'}, f"Could not open export folder: {exc}")
+
+
+def _export_directory(scene):
+    """Return the absolute configured export directory."""
+    path = scene.m2nla_export_path.strip() or "//Export/"
+    return os.path.normpath(bpy.path.abspath(path))
+
+
+def _default_export_name(filename_ext):
+    """Use the blend filename for a predictable default export name."""
+    blend_name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+    return f"{blend_name or 'untitled'}{filename_ext}"
+
+
+def _set_auto_export_filepath(operator, scene):
+    """Set the deterministic Auto Export filepath when the mode is enabled."""
+    if not scene.m2nla_auto_export:
+        return True
+    if not bpy.data.is_saved or not bpy.data.filepath:
+        operator.report(
+            {'ERROR'},
+            "Save the blend file before using Auto Export",
+        )
+        return False
+    operator.filepath = os.path.join(
+        _export_directory(scene),
+        _default_export_name(operator.filename_ext),
+    )
+    return True
+
+
+def _invoke_quick_export(operator, context, event):
+    """Run directly in Auto Export mode, otherwise open the file browser."""
+    scene = context.scene
+    if not scene.m2nla_auto_export:
+        return _invoke_export_browser(operator, context, event)
+
+    if not _set_auto_export_filepath(operator, scene):
+        return {'CANCELLED'}
+    return operator.execute(context)
+
+
+def _invoke_export_browser(operator, context, event):
+    """Open an ExportHelper browser at the scene's configured directory."""
+    directory = _export_directory(context.scene)
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        operator.report(
+            {'WARNING'},
+            f"Could not create export folder; using current folder: {exc}",
+        )
+        directory = os.path.dirname(bpy.data.filepath) or os.getcwd()
+
+    operator.filepath = os.path.join(
+        directory, _default_export_name(operator.filename_ext))
+    return ExportHelper.invoke(operator, context, event)
+
+
+def _prepare_export_destination(scene, operator):
+    """Resolve the selected filepath and make sure its directory exists."""
+    operator.filepath = os.path.normpath(bpy.path.abspath(operator.filepath))
+    directory = os.path.dirname(operator.filepath)
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        operator.report({'ERROR'}, f"Could not create export folder: {exc}")
+        return False
+    return True
+
+
+def collect_split_issues(split_result):
+    """Validate the NLA tracks created by a temporary marker split."""
+    issues = []
+    expected_names = set(split_result['expected_clip_names'])
+    created_names = set(split_result['clip_names'])
+    missing_globally = sorted(expected_names - created_names)
+    if missing_globally:
+        issues.append((
+            'ERROR',
+            "No object produced these clips: "
+            + ", ".join(missing_globally[:4]),
+        ))
+
+    expected_total = split_result['expected_track_count']
+    actual_total = split_result['actual_track_count']
+    if actual_total != expected_total:
+        issues.append((
+            'WARNING',
+            f"Created {actual_total}/{expected_total} expected NLA tracks",
+        ))
+
+    for object_result in split_result['objects']:
+        object_name = object_result['name']
+        expected_count = object_result['expected_track_count']
+        actual_count = object_result['actual_track_count']
+        if actual_count != expected_count:
+            issues.append((
+                'WARNING',
+                f"{object_name}: created {actual_count}/{expected_count} tracks",
+            ))
+
+        for clip in object_result['clips']:
+            clip_issues = []
+            if not clip['created']:
+                clip_issues.append(('WARNING', "track was not created"))
+            else:
+                if clip['action_empty']:
+                    clip_issues.append(('ERROR', "Action is empty"))
+                if clip['strip_empty']:
+                    clip_issues.append(('ERROR', "strip is empty"))
+                if clip['track_name'] != clip['name']:
+                    clip_issues.append((
+                        'ERROR',
+                        f"track name is '{clip['track_name']}'",
+                    ))
+                if clip['strip_name'] != clip['name']:
+                    clip_issues.append((
+                        'ERROR',
+                        f"strip name is '{clip['strip_name']}'",
+                    ))
+                start_matches = abs(
+                    clip['actual_start'] - clip['expected_start']) < 0.001
+                end_matches = abs(
+                    clip['actual_end'] - clip['expected_end']) < 0.001
+                if not start_matches or not end_matches:
+                    clip_issues.append((
+                        'ERROR',
+                        "strip range is "
+                        f"{clip['actual_start']:g}-{clip['actual_end']:g}; "
+                        f"expected {clip['expected_start']:g}-"
+                        f"{clip['expected_end']:g}",
+                    ))
+
+            if clip_issues:
+                severity = ('ERROR' if any(level == 'ERROR'
+                                           for level, _ in clip_issues)
+                            else 'WARNING')
+                message = "; ".join(message for _level, message
+                                    in clip_issues)
+                clip['severity'] = severity
+                clip['message'] = message
+                issues.append((
+                    severity,
+                    f"{object_name} / {clip['name']}: {message}",
+                ))
+            else:
+                clip['severity'] = 'OK'
+                clip['message'] = (
+                    f"Track/Strip OK  "
+                    f"{clip['actual_start']:g}-{clip['actual_end']:g}"
+                )
+
+    return issues
+
+
+def _split_allows_export(operator, split_result):
+    """Report generated-split problems and block export on hard errors."""
+    issues = collect_split_issues(split_result)
+    errors = [message for severity, message in issues
+              if severity == 'ERROR']
+    warnings = [message for severity, message in issues
+                if severity == 'WARNING']
+    if errors:
+        operator.report(
+            {'ERROR'},
+            f"NLA split validation failed ({len(errors)}): {errors[0]}",
+        )
+        return False
+    if warnings:
+        operator.report(
+            {'WARNING'},
+            f"NLA split warnings ({len(warnings)}): {warnings[0]}",
+        )
+    return True
+
+
+def _remember_export_directory(scene, filepath):
+    """Keep the last successful directory as the next export destination."""
+    directory = os.path.dirname(bpy.path.abspath(filepath))
+    configured = _export_directory(scene)
+    if os.path.normcase(directory) == os.path.normcase(configured):
+        return
+    scene.m2nla_export_path = directory + os.sep
 
 
 # ============================================================
@@ -612,9 +796,17 @@ def _temporary_nla_split(objects, scene):
             'temp_actions': [],
         })
 
-    segments = get_marker_segments(scene)
+    segments = [seg for seg in get_marker_segments(scene)
+                if not getattr(seg['marker'], "m2nla_muted", False)]
     clip_names = set()
     boundary_keys = scene.m2nla_boundary_keys
+    split_result = {
+        'expected_clip_names': [seg['name'] for seg in segments],
+        'clip_names': [],
+        'expected_track_count': len(object_states) * len(segments),
+        'actual_track_count': 0,
+        'objects': [],
+    }
 
     # Backup original scene frame range
     orig_frame_start = scene.frame_start
@@ -629,10 +821,32 @@ def _temporary_nla_split(objects, scene):
             anim = state['anim']
             original_action = state['original_action']
             original_slot = state['original_slot']
+            object_result = {
+                'name': obj.name,
+                'expected_track_count': len(segments),
+                'actual_track_count': 0,
+                'clips': [],
+            }
+            split_result['objects'].append(object_result)
 
             for seg in segments:
-                if getattr(seg['marker'], "m2nla_muted", False):
-                    continue
+                clip_result = {
+                    'name': seg['name'],
+                    'source_start': seg['start'],
+                    'source_end': seg['end'],
+                    'expected_start': 1.0,
+                    'expected_end': float(seg['length']),
+                    'created': False,
+                    'action_empty': True,
+                    'strip_empty': True,
+                    'track_name': '',
+                    'strip_name': '',
+                    'actual_start': 0.0,
+                    'actual_end': 0.0,
+                    'severity': 'WARNING',
+                    'message': 'track was not created',
+                }
+                object_result['clips'].append(clip_result)
 
                 # Action name includes object prefix to avoid collisions
                 # across different rigs. NLA Track name stays as marker name
@@ -675,6 +889,23 @@ def _temporary_nla_split(objects, scene):
                     if slot and hasattr(strip, 'action_slot'):
                         strip.action_slot = slot
                     clip_names.add(seg['name'])
+                    action_key_count = sum(
+                        len(fcurve.keyframe_points)
+                        for fcurve in _get_fcurves(new_action, slot)
+                    )
+                    clip_result.update({
+                        'created': True,
+                        'action_empty': action_key_count == 0,
+                        'strip_empty': (
+                            strip.action is None or action_key_count == 0
+                        ),
+                        'track_name': track.name,
+                        'strip_name': strip.name,
+                        'actual_start': float(strip.frame_start),
+                        'actual_end': float(strip.frame_end),
+                    })
+                    object_result['actual_track_count'] += 1
+                    split_result['actual_track_count'] += 1
                 else:
                     state['temp_actions'].remove(new_action)
                     new_action.use_fake_user = False
@@ -693,7 +924,8 @@ def _temporary_nla_split(objects, scene):
         current_frame = scene.frame_current
         scene.frame_set(current_frame)
 
-        yield list(clip_names)
+        split_result['clip_names'] = sorted(clip_names)
+        yield split_result
     finally:
         # Restore scene frame range
         scene.frame_start = orig_frame_start
@@ -732,7 +964,10 @@ class MARKERNLA_OT_validate_export(Operator):
     """Validate marker clips and export targets before Quick Export"""
     bl_idname = "markernla.validate_export"
     bl_label = "Export Preflight"
-    bl_description = "Check clip names, Action slots, keys, NLA, and hierarchy"
+    bl_description = (
+        "Build a temporary marker split and check clip names, tracks, "
+        "strips, frame ranges, Action content, slots, and hierarchy"
+    )
     bl_options = {'INTERNAL'}
 
     export_format: EnumProperty(
@@ -746,6 +981,22 @@ class MARKERNLA_OT_validate_export(Operator):
 
     def execute(self, context):
         issues = collect_export_issues(context, self.export_format)
+        split_result = None
+        static_errors = [message for severity, message in issues
+                         if severity == 'ERROR']
+
+        if not static_errors:
+            targets = _get_quick_export_targets(context)
+            try:
+                with _temporary_nla_split(targets, context.scene) as result:
+                    split_result = result
+                    issues.extend(collect_split_issues(split_result))
+            except Exception as exc:
+                issues.append((
+                    'ERROR',
+                    f"Temporary NLA split check failed: {exc}",
+                ))
+
         error_count = sum(severity == 'ERROR'
                           for severity, _message in issues)
         warning_count = sum(severity == 'WARNING'
@@ -753,17 +1004,59 @@ class MARKERNLA_OT_validate_export(Operator):
 
         def draw_popup(menu, _context):
             layout = menu.layout
-            if not issues:
+            if issues:
+                layout.label(text="Preflight", icon='VIEWZOOM')
+                for severity, message in issues:
+                    icon = 'CANCEL' if severity == 'ERROR' else 'ERROR'
+                    row = layout.row()
+                    row.alert = severity == 'ERROR'
+                    row.label(text=message, icon=icon)
+
+            if split_result is not None:
+                if issues:
+                    layout.separator()
+                actual = split_result['actual_track_count']
+                expected = split_result['expected_track_count']
+                summary_icon = ('CHECKMARK' if actual == expected
+                                else 'ERROR')
+                layout.label(
+                    text=f"NLA Split Dry Run — {actual}/{expected} tracks",
+                    icon=summary_icon,
+                )
+                for object_result in split_result['objects']:
+                    box = layout.box()
+                    box.label(
+                        text=(
+                            f"{object_result['name']} — "
+                            f"{object_result['actual_track_count']}/"
+                            f"{object_result['expected_track_count']} tracks"
+                        ),
+                        icon='OBJECT_DATA',
+                    )
+                    for clip in object_result['clips']:
+                        severity = clip['severity']
+                        symbol = {'OK': '✓', 'WARNING': '⚠'}.get(
+                            severity, '✗')
+                        icon = {'OK': 'CHECKMARK', 'WARNING': 'ERROR'}.get(
+                            severity, 'CANCEL')
+                        row = box.row()
+                        row.alert = severity == 'ERROR'
+                        row.label(
+                            text=(f"{clip['name']}  {symbol}  "
+                                  f"{clip['message']}"),
+                            icon=icon,
+                        )
+            elif not issues:
                 layout.label(
                     text="Ready to export — no issues found",
                     icon='CHECKMARK',
                 )
-                return
-            for severity, message in issues:
-                icon = 'CANCEL' if severity == 'ERROR' else 'ERROR'
-                row = layout.row()
-                row.alert = severity == 'ERROR'
-                row.label(text=message, icon=icon)
+            elif static_errors:
+                layout.separator()
+                layout.label(
+                    text="NLA split dry run skipped until errors are fixed",
+                    icon='INFO',
+                )
 
         title = (f"{self.export_format} Preflight — "
                  f"{error_count} errors, {warning_count} warnings")
@@ -798,8 +1091,15 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
     def poll(cls, context):
         return len(context.scene.timeline_markers) > 0
 
+    def invoke(self, context, event):
+        return _invoke_quick_export(self, context, event)
+
     def execute(self, context):
         scene = context.scene
+        if not _set_auto_export_filepath(self, scene):
+            return {'CANCELLED'}
+        if not _prepare_export_destination(scene, self):
+            return {'CANCELLED'}
         if not _preflight_allows_export(self, context, 'FBX'):
             return {'CANCELLED'}
         anim_objs = _get_quick_export_targets(context)
@@ -808,9 +1108,12 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
             self.report({'ERROR'}, "No valid objects with animation data found")
             return {'CANCELLED'}
 
-        with _temporary_nla_split(anim_objs, scene) as clip_names:
+        with _temporary_nla_split(anim_objs, scene) as split_result:
+            clip_names = split_result['clip_names']
             if not clip_names:
                 self.report({'ERROR'}, "No keyframes found in marker segments")
+                return {'CANCELLED'}
+            if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
             try:
@@ -833,6 +1136,7 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
             {'INFO'},
             f"Exported {len(clip_names)} clips → {self.filepath}"
         )
+        _remember_export_directory(scene, self.filepath)
         _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
@@ -853,8 +1157,15 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
     def poll(cls, context):
         return len(context.scene.timeline_markers) > 0
 
+    def invoke(self, context, event):
+        return _invoke_quick_export(self, context, event)
+
     def execute(self, context):
         scene = context.scene
+        if not _set_auto_export_filepath(self, scene):
+            return {'CANCELLED'}
+        if not _prepare_export_destination(scene, self):
+            return {'CANCELLED'}
         if not _preflight_allows_export(self, context, 'GLB'):
             return {'CANCELLED'}
         anim_objs = _get_quick_export_targets(context)
@@ -863,9 +1174,12 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             self.report({'ERROR'}, "No valid objects with animation data found")
             return {'CANCELLED'}
 
-        with _temporary_nla_split(anim_objs, scene) as clip_names:
+        with _temporary_nla_split(anim_objs, scene) as split_result:
+            clip_names = split_result['clip_names']
             if not clip_names:
                 self.report({'ERROR'}, "No keyframes found in marker segments")
+                return {'CANCELLED'}
+            if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
             kwargs = dict(
@@ -916,6 +1230,7 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             {'INFO'},
             f"Exported {len(clip_names)} clips → {self.filepath}"
         )
+        _remember_export_directory(scene, self.filepath)
         _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
@@ -1078,8 +1393,13 @@ class MARKERNLA_OT_export_fbx(Operator, ExportHelper):
     def poll(cls, context):
         return True
 
+    def invoke(self, context, event):
+        return _invoke_export_browser(self, context, event)
+
     def execute(self, context):
         scene = context.scene
+        if not _prepare_export_destination(scene, self):
+            return {'CANCELLED'}
         try:
             bpy.ops.export_scene.fbx(
                 filepath=self.filepath,
@@ -1097,6 +1417,7 @@ class MARKERNLA_OT_export_fbx(Operator, ExportHelper):
             return {'CANCELLED'}
 
         self.report({'INFO'}, f"Exported FBX → {self.filepath}")
+        _remember_export_directory(scene, self.filepath)
         _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
@@ -1114,8 +1435,13 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
     def poll(cls, context):
         return True
 
+    def invoke(self, context, event):
+        return _invoke_export_browser(self, context, event)
+
     def execute(self, context):
         scene = context.scene
+        if not _prepare_export_destination(scene, self):
+            return {'CANCELLED'}
         kwargs = dict(
             filepath=self.filepath,
             export_format='GLB',
@@ -1141,6 +1467,7 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
             return {'CANCELLED'}
 
         self.report({'INFO'}, f"Exported GLB → {self.filepath}")
+        _remember_export_directory(scene, self.filepath)
         _open_export_folder(scene, self.filepath, self)
         return {'FINISHED'}
 
@@ -1324,6 +1651,8 @@ class MARKERNLA_PT_panel(Panel):
         box = layout.box()
         box.label(text="Settings", icon='PREFERENCES')
         col = box.column(align=True)
+        col.prop(scene, "m2nla_export_path", text="Export Path")
+        col.prop(scene, "m2nla_auto_export")
         col.prop(scene, "m2nla_only_deform_bones")
         col.prop(scene, "m2nla_boundary_keys")
         col.prop(scene, "m2nla_selected_only")
@@ -1452,6 +1781,27 @@ def register():
         description="Open the containing folder after a successful export",
         default=True,
     )
+    S.m2nla_auto_export = BoolProperty(
+        name="Auto Export",
+        description=(
+            "Skip the file browser and overwrite an FBX or GLB named after "
+            "the saved blend file in Export Path"
+        ),
+        default=False,
+    )
+    S.m2nla_export_path = StringProperty(
+        name="Export Path",
+        description=(
+            "Folder used for exports; // is relative to the blend file"
+        ),
+        default="//Export/",
+        subtype='DIR_PATH',
+        options={'PATH_SUPPORTS_BLEND_RELATIVE'},
+    )
+    for scene in bpy.data.scenes:
+        if scene.m2nla_export_path.strip().lower() in {
+                "/export", "/export/", "\\export", "\\export\\"}:
+            scene.m2nla_export_path = "//Export/"
     S.m2nla_show_nla_tools = BoolProperty(
         name="Show NLA Tools",
         description="Show advanced manual NLA conversion tools",
@@ -1471,6 +1821,8 @@ def unregister():
         "m2nla_unlink_source",
         "m2nla_selected_only",
         "m2nla_open_folder",
+        "m2nla_auto_export",
+        "m2nla_export_path",
         "m2nla_show_nla_tools",
     )
     for p in props:
