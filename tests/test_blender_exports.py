@@ -166,6 +166,58 @@ def assert_glb_sample_values(samples, fps):
                     clip_name, node_name, translations)
 
 
+def clear_scene_for_fbx_import(scene):
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action, do_unlink=True)
+    for marker in list(scene.timeline_markers):
+        scene.timeline_markers.remove(marker)
+
+
+def assert_fbx_reimport(filepath, scene):
+    clear_scene_for_fbx_import(scene)
+    import_result = bpy.ops.import_scene.fbx(
+        filepath=str(filepath),
+        use_anim=True,
+    )
+    assert import_result == {'FINISHED'}, import_result
+
+    imported_objects = list(scene.objects)
+    assert [(obj.name, obj.type) for obj in imported_objects] == [
+        ('ExportCube', 'MESH'),
+    ]
+    imported_object = imported_objects[0]
+
+    expected_actions = {
+        'ExportCube|First': (0.0, 1.0),
+        'ExportCube|Second': (2.0, 3.0),
+    }
+    imported_action_names = {action.name for action in bpy.data.actions}
+    assert imported_action_names == set(expected_actions), imported_action_names
+    assert all('ExistingNLA' not in name for name in imported_action_names)
+
+    anim = imported_object.animation_data
+    assert anim is not None
+    for action_name, expected_x_values in expected_actions.items():
+        action = bpy.data.actions[action_name]
+        assert tuple(action.frame_range) == (1.0, 2.0)
+        anim.action = action
+        assert action.slots
+        anim.action_slot = action.slots[0]
+
+        samples = []
+        for frame in (1, 2):
+            scene.frame_set(frame)
+            samples.append(tuple(imported_object.location))
+
+        for translation, expected_x in zip(samples, expected_x_values):
+            assert abs(translation[0] - expected_x) < 1e-5, (
+                action_name, samples)
+            assert abs(translation[1]) < 1e-5, (action_name, samples)
+            assert abs(translation[2]) < 1e-5, (action_name, samples)
+
+
 def run_export_test():
     addon.register()
     scene = bpy.context.scene
@@ -177,9 +229,18 @@ def run_export_test():
     cube, source_action = build_animated_cube("ExportCube", 0)
     second_cube, second_source_action = build_animated_cube("SecondCube", 2)
     cube.select_set(True)
-    second_cube.select_set(True)
+    second_cube.select_set(False)
     bpy.context.view_layer.objects.active = cube
     existing_track = add_existing_nla_track(cube)
+
+    second_cube.select_set(True)
+    multiple_target_issues = addon.collect_export_issues(
+        bpy.context, 'FBX')
+    assert any(
+        severity == 'ERROR' and 'one animated object' in message
+        for severity, message in multiple_target_issues
+    ), multiple_target_issues
+    second_cube.select_set(False)
 
     output_dir = Path(__file__).resolve().parents[1] / ".test_output"
     if output_dir.exists():
@@ -191,6 +252,8 @@ def run_export_test():
         glb_path = output_dir / "clips.glb"
         fbx_result = bpy.ops.markernla.quick_export_fbx(
             'EXEC_DEFAULT', filepath=str(fbx_path))
+
+        second_cube.select_set(True)
         glb_result = bpy.ops.markernla.quick_export_glb(
             'EXEC_DEFAULT', filepath=str(glb_path))
 
@@ -221,6 +284,7 @@ def run_export_test():
         assert not existing_track.strips[0].mute
         assert not any(action.name.startswith("ExportCube_")
                        for action in bpy.data.actions)
+        assert_fbx_reimport(fbx_path, scene)
     finally:
         addon.unregister()
         if output_dir.exists():

@@ -78,6 +78,12 @@ def collect_export_issues(context, export_format='FBX'):
     targets = _get_quick_export_targets(context)
     if not targets:
         issues.append(('ERROR', "No target object has an active Action"))
+    elif export_format == 'FBX' and len(targets) > 1:
+        issues.append((
+            'ERROR',
+            "FBX Quick Export supports one animated object at a time; "
+            "multiple active Actions produce incomplete Blender FBX takes",
+        ))
 
     for obj in targets:
         anim = obj.animation_data

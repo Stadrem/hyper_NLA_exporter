@@ -77,7 +77,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
   * *Check FBX / Check GLB*: Performs a temporary NLA split and shows expected/created track counts plus per-object `✓`, `⚠`, or `✗` results for every clip. It validates Action/Strip content, names, frame ranges, Action Slots, keyframes, and hierarchy, then removes all temporary data. Hard errors also block Quick Export.
-  * *FBX*: Splits and exports as separate takes in a single `.fbx` file.
+  * *FBX*: Splits one animated object into separate takes in a single `.fbx` file. Select the animated rig plus any non-animated mesh hierarchy; multiple objects with active Actions are blocked because Blender's FBX exporter does not merge their same-named takes safely.
   * *GLB*: Splits and exports as separate clips in a single `.glb` file.
 * **Manual NLA Tools (Foldout)**: Contains permanent conversion actions (`Markers → NLA` and `NLA → Action`), existing NLA exporters, and cleanups.
 
