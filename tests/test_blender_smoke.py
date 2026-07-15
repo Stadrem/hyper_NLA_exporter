@@ -152,6 +152,42 @@ def test_temporary_split_restores_state():
     addon.unregister()
 
 
+def test_manual_marker_conversion():
+    addon.register()
+    scene = bpy.context.scene
+    bpy.ops.object.select_all(action='DESELECT')
+
+    obj = bpy.data.objects.new("ManualRig", None)
+    scene.collection.objects.link(obj)
+    obj.animation_data_create()
+    source = bpy.data.actions.new("ManualSource")
+    channelbag = addon._ensure_channelbag(source, obj)
+    curve = channelbag.fcurves.new("location", index=0)
+    curve.keyframe_points.insert(1, 0)
+    curve.keyframe_points.insert(4, 3)
+    obj.animation_data.action = source
+    obj.animation_data.action_slot = channelbag.slot
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+    scene.m2nla_clear_nla = True
+    scene.m2nla_unlink_source = True
+    scene.m2nla_boundary_keys = True
+    result = bpy.ops.markernla.convert('EXEC_DEFAULT')
+
+    assert result == {'FINISHED'}, result
+    assert obj.animation_data.action is None
+    tracks = list(obj.animation_data.nla_tracks)
+    assert [track.name for track in tracks] == ["Walk", "Run"]
+    assert [track.strips[0].frame_start for track in tracks] == [1.0, 3.0]
+    assert [track.strips[0].name for track in tracks] == ["Walk", "Run"]
+    assert [track.strips[0].action.name for track in tracks] == [
+        "ManualRig_Walk",
+        "ManualRig_Run",
+    ]
+    addon.unregister()
+
+
 if __name__ == "__main__":
     clear_scene()
     test_registration()
@@ -159,4 +195,5 @@ if __name__ == "__main__":
     test_shared_action_slot_copy()
     test_bezier_boundary_shape_is_preserved()
     test_temporary_split_restores_state()
+    test_manual_marker_conversion()
     print("HYPER_NLA_SMOKE_TESTS_OK")

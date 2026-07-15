@@ -175,6 +175,80 @@ def _open_export_folder(scene, filepath, operator):
         operator.report({'WARNING'}, f"Could not open export folder: {exc}")
 
 
+def _run_fbx_export(operator, scene):
+    """Run the shared FBX exporter configuration and report failures."""
+    try:
+        bpy.ops.export_scene.fbx(
+            filepath=operator.filepath,
+            use_selection=scene.m2nla_selected_only,
+            use_armature_deform_only=scene.m2nla_only_deform_bones,
+            bake_anim=True,
+            bake_anim_use_nla_strips=True,
+            bake_anim_use_all_actions=False,
+            bake_anim_force_startend_keying=True,
+            add_leaf_bones=False,
+            path_mode='AUTO',
+        )
+    except Exception as exc:
+        operator.report({'ERROR'}, f"FBX export failed: {exc}")
+        return False
+    return True
+
+
+def _run_glb_export(operator, scene, marker_actions=False):
+    """Run GLB export for marker Actions or existing NLA tracks."""
+    kwargs = {
+        'filepath': operator.filepath,
+        'export_format': 'GLB',
+        'export_animations': True,
+        'export_def_bones': scene.m2nla_only_deform_bones,
+    }
+    if marker_actions:
+        kwargs.update({
+            'export_animation_mode': 'ACTIONS',
+            'export_merge_animation': 'NLA_TRACK',
+            'export_anim_single_armature': False,
+            'export_apply': True,
+            'export_rest_position_armature': False,
+        })
+    else:
+        kwargs['export_animation_mode'] = 'NLA_TRACKS'
+
+    try:
+        bpy.ops.export_scene.gltf(
+            use_selection=scene.m2nla_selected_only,
+            **kwargs,
+        )
+    except TypeError:
+        # Compatibility fallback for Blender versions using the older glTF
+        # NLA option instead of export_animation_mode.
+        kwargs.pop('export_animation_mode', None)
+        kwargs.pop('export_merge_animation', None)
+        kwargs.pop('export_anim_single_armature', None)
+        kwargs.pop('export_rest_position_armature', None)
+        kwargs['export_nla_strips'] = True
+        try:
+            bpy.ops.export_scene.gltf(
+                use_selection=scene.m2nla_selected_only,
+                **kwargs,
+            )
+        except Exception as exc:
+            operator.report({'ERROR'}, f"GLB export failed: {exc}")
+            return False
+    except Exception as exc:
+        operator.report({'ERROR'}, f"GLB export failed: {exc}")
+        return False
+    return True
+
+
+def _finish_export(operator, scene, message):
+    """Report export success and update shared destination state."""
+    operator.report({'INFO'}, message)
+    _remember_export_directory(scene, operator.filepath)
+    _open_export_folder(scene, operator.filepath, operator)
+    return {'FINISHED'}
+
+
 def _export_directory(scene):
     """Return the absolute configured export directory."""
     path = scene.m2nla_export_path.strip() or "//Export/"

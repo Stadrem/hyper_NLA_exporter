@@ -15,6 +15,64 @@ from .clips import get_marker_segments
 #  Temporary NLA split for export
 # ============================================================
 
+def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
+                                 track_start, create_boundaries):
+    """Create one split Action and its matching NLA Track/Strip.
+
+    Returns a dictionary containing the created datablocks and key count, or
+    ``None`` when the source segment has no animated or preserved content.
+    """
+    action_name = f"{obj.name}_{segment['name']}"
+    action = bpy.data.actions.new(name=action_name)
+    action.use_fake_user = True
+
+    did_copy = copy_segment_to_action(
+        source_action,
+        action,
+        segment['start'],
+        segment['end'],
+        create_boundaries=create_boundaries,
+        datablock=obj,
+        source_slot=source_slot,
+    )
+    _preserve_static_transforms(
+        action,
+        obj,
+        source_action,
+        source_slot=source_slot,
+    )
+
+    if not did_copy and not _get_fcurves(action):
+        action.use_fake_user = False
+        bpy.data.actions.remove(action)
+        return None
+
+    channelbag = _get_channelbag(action)
+    slot = getattr(channelbag, 'slot', None)
+    track = obj.animation_data.nla_tracks.new()
+    track.name = segment['name']
+    strip = track.strips.new(
+        name=segment['name'],
+        start=track_start,
+        action=action,
+    )
+    strip.name = segment['name']
+    if slot and hasattr(strip, 'action_slot'):
+        strip.action_slot = slot
+
+    key_count = sum(
+        len(fcurve.keyframe_points)
+        for fcurve in _get_fcurves(action, slot)
+    )
+    return {
+        'action': action,
+        'track': track,
+        'strip': strip,
+        'slot': slot,
+        'key_count': key_count,
+    }
+
+
 @contextmanager
 def _temporary_nla_split(objects, scene):
     """Temporarily split actions into NLA strips by markers for multiple objects.
@@ -114,68 +172,33 @@ def _temporary_nla_split(objects, scene):
                 }
                 object_result['clips'].append(clip_result)
 
-                # Action name includes object prefix to avoid collisions
-                # across different rigs. NLA Track name stays as marker name
-                # (that's what glTF uses as the animation clip name).
-                action_name = f"{obj.name}_{seg['name']}"
-                new_action = bpy.data.actions.new(name=action_name)
-                new_action.use_fake_user = True
-                state['temp_actions'].append(new_action)
-
-                did_copy = copy_segment_to_action(
-                    original_action, new_action, seg['start'], seg['end'],
+                built = _build_nla_track_for_segment(
+                    obj,
+                    original_action,
+                    original_slot,
+                    seg,
+                    track_start=1,
                     create_boundaries=boundary_keys,
-                    datablock=obj,
-                    source_slot=original_slot,
                 )
-                # Inject un-keyframed pose-bone transforms (e.g. Root scale)
-                # so they survive NLA rest-pose evaluation.
-                _preserve_static_transforms(
-                    new_action, obj, original_action,
-                    source_slot=original_slot,
-                )
-
-                # Check if the action has any content (animated keys or
-                # static transforms).
-                has_content = did_copy or bool(_get_fcurves(new_action))
-
-                if has_content:
-                    dst_cb = _get_channelbag(new_action)
-                    slot = getattr(dst_cb, 'slot', None)
-
-                    track = anim.nla_tracks.new()
-                    state['temp_tracks'].append(track)
-                    track.name = seg['name']
-                    strip = track.strips.new(
-                        name=seg['name'],
-                        start=1,
-                        action=new_action,
-                    )
-                    strip.name = seg['name']
-                    if slot and hasattr(strip, 'action_slot'):
-                        strip.action_slot = slot
+                if built is not None:
+                    state['temp_actions'].append(built['action'])
+                    state['temp_tracks'].append(built['track'])
                     clip_names.add(seg['name'])
-                    action_key_count = sum(
-                        len(fcurve.keyframe_points)
-                        for fcurve in _get_fcurves(new_action, slot)
-                    )
+                    strip = built['strip']
+                    action_key_count = built['key_count']
                     clip_result.update({
                         'created': True,
                         'action_empty': action_key_count == 0,
                         'strip_empty': (
                             strip.action is None or action_key_count == 0
                         ),
-                        'track_name': track.name,
+                        'track_name': built['track'].name,
                         'strip_name': strip.name,
                         'actual_start': float(strip.frame_start),
                         'actual_end': float(strip.frame_end),
                     })
                     object_result['actual_track_count'] += 1
                     split_result['actual_track_count'] += 1
-                else:
-                    state['temp_actions'].remove(new_action)
-                    new_action.use_fake_user = False
-                    bpy.data.actions.remove(new_action)
 
             # Keep the original action active. The FBX and glTF exporters
             # temporarily detach it while soloing NLA strips, then restore it.
