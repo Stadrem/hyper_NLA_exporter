@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Hyper NLA Exporter",
     "author": "Kim Dongsu",
-    "version": (2, 4, 0),
+    "version": (2, 4, 1),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > K-Quick Tools",
     "description": (
@@ -16,8 +16,14 @@ import os
 
 import bpy
 from contextlib import contextmanager
-from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
-from bpy.types import Operator, Panel
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    IntProperty,
+    PointerProperty,
+    StringProperty,
+)
+from bpy.types import Operator, Panel, PropertyGroup
 from bpy_extras.io_utils import ExportHelper
 from bpy_extras import anim_utils
 
@@ -1566,6 +1572,16 @@ class MARKERNLA_OT_cleanup(Operator):
 #  UI Panel
 # ============================================================
 
+class MARKERNLA_PG_ui_state(PropertyGroup):
+    """Transient panel expansion state."""
+
+    show_nla_tools: BoolProperty(
+        name="Show NLA Tools",
+        description="Show advanced manual NLA conversion tools",
+        default=False,
+    )
+
+
 class MARKERNLA_PT_panel(Panel):
     bl_label       = "Hyper NLA Exporter"
     bl_idname      = "MARKERNLA_PT_panel"
@@ -1681,13 +1697,17 @@ class MARKERNLA_PT_panel(Panel):
 
         # ── Manual NLA Tools (advanced) ──────────────────────
         box = layout.box()
+        ui_state = scene.m2nla_ui_state
+        nla_tools_icon = (
+            'TRIA_DOWN' if ui_state.show_nla_tools else 'TRIA_RIGHT'
+        )
         header = box.row()
-        header.prop(scene, "m2nla_show_nla_tools",
+        header.prop(ui_state, "show_nla_tools",
                     text="Manual NLA Tools",
-                    icon='TRIA_DOWN' if scene.m2nla_show_nla_tools else 'TRIA_RIGHT',
+                    icon=nla_tools_icon,
                     emboss=False)
 
-        if scene.m2nla_show_nla_tools:
+        if ui_state.show_nla_tools:
             col = box.column(align=True)
             col.prop(scene, "m2nla_clear_nla")
             col.prop(scene, "m2nla_unlink_source")
@@ -1714,6 +1734,10 @@ class MARKERNLA_PT_panel(Panel):
 #  Registration
 # ============================================================
 
+_property_classes = (
+    MARKERNLA_PG_ui_state,
+)
+
 _classes = (
     MARKERNLA_OT_validate_export,
     MARKERNLA_OT_quick_export_fbx,
@@ -1729,12 +1753,55 @@ _classes = (
     MARKERNLA_PT_panel,
 )
 
+_scene_props = (
+    "m2nla_only_deform_bones",
+    "m2nla_boundary_keys",
+    "m2nla_clear_nla",
+    "m2nla_unlink_source",
+    "m2nla_selected_only",
+    "m2nla_open_folder",
+    "m2nla_auto_export",
+    "m2nla_export_path",
+    "m2nla_ui_state",
+)
+
+
+def _unregister_class_if_registered(cls):
+    """Remove a stale class left behind by a live addon reload."""
+    existing = getattr(bpy.types, cls.__name__, None)
+    if existing is None:
+        return
+    try:
+        bpy.utils.unregister_class(existing)
+    except RuntimeError:
+        pass
+
+
+def _clear_registered_properties():
+    """Remove RNA definitions before rebuilding addon runtime state."""
+    S = bpy.types.Scene
+    for prop_name in _scene_props:
+        if hasattr(S, prop_name):
+            delattr(S, prop_name)
+
+    if hasattr(bpy.types.TimelineMarker, "m2nla_muted"):
+        delattr(bpy.types.TimelineMarker, "m2nla_muted")
+
 
 def register():
-    for cls in _classes:
+    # Clear old panel/operator classes first so a live reload cannot leave
+    # a panel drawing against properties from another addon version.
+    for cls in reversed(_classes):
+        _unregister_class_if_registered(cls)
+    _clear_registered_properties()
+    for cls in reversed(_property_classes):
+        _unregister_class_if_registered(cls)
+    for cls in _property_classes:
         bpy.utils.register_class(cls)
 
     S = bpy.types.Scene
+
+    S.m2nla_ui_state = PointerProperty(type=MARKERNLA_PG_ui_state)
 
     bpy.types.TimelineMarker.m2nla_muted = BoolProperty(
         name="Mute Clip",
@@ -1798,39 +1865,24 @@ def register():
         subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},
     )
-    for scene in bpy.data.scenes:
+    # During addon enable Blender can expose _RestrictData, which does not
+    # provide scene collections. Existing scenes are optional migration only.
+    for scene in getattr(bpy.data, "scenes", ()):
         if scene.m2nla_export_path.strip().lower() in {
                 "/export", "/export/", "\\export", "\\export\\"}:
             scene.m2nla_export_path = "//Export/"
-    S.m2nla_show_nla_tools = BoolProperty(
-        name="Show NLA Tools",
-        description="Show advanced manual NLA conversion tools",
-        default=False,
-    )
+
+    # Register UI classes only after every property they draw exists.
+    for cls in _classes:
+        bpy.utils.register_class(cls)
 
 
 def unregister():
     for cls in reversed(_classes):
-        bpy.utils.unregister_class(cls)
-
-    S = bpy.types.Scene
-    props = (
-        "m2nla_only_deform_bones",
-        "m2nla_boundary_keys",
-        "m2nla_clear_nla",
-        "m2nla_unlink_source",
-        "m2nla_selected_only",
-        "m2nla_open_folder",
-        "m2nla_auto_export",
-        "m2nla_export_path",
-        "m2nla_show_nla_tools",
-    )
-    for p in props:
-        if hasattr(S, p):
-            delattr(S, p)
-
-    if hasattr(bpy.types.TimelineMarker, "m2nla_muted"):
-        delattr(bpy.types.TimelineMarker, "m2nla_muted")
+        _unregister_class_if_registered(cls)
+    _clear_registered_properties()
+    for cls in reversed(_property_classes):
+        _unregister_class_if_registered(cls)
 
 
 if __name__ == "__main__":
