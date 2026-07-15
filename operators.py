@@ -257,7 +257,11 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 filepath=self.filepath,
                 export_format='GLB',
                 export_animations=True,
-                export_animation_mode='NLA_TRACKS',
+                # ACTIONS mode respects muted strips. Merge by NLA track name
+                # so per-object temporary Actions still become one clip.
+                export_animation_mode='ACTIONS',
+                export_merge_animation='NLA_TRACK',
+                export_anim_single_armature=False,
                 export_apply=True,
                 export_rest_position_armature=False,
                 export_def_bones=scene.m2nla_only_deform_bones,
@@ -274,6 +278,19 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 for obj in original_selection:
                     select_recursive(obj)
 
+            # ACTIONS mode would also export each source Action. Temporarily
+            # detach only the active Action; the surrounding split context
+            # keeps the original Action and slot available for restoration.
+            active_action_states = []
+            for obj in anim_objs:
+                anim = obj.animation_data
+                active_action_states.append((
+                    anim,
+                    anim.action,
+                    getattr(anim, 'action_slot', None),
+                ))
+                anim.action = None
+
             try:
                 try:
                     bpy.ops.export_scene.gltf(
@@ -281,6 +298,8 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 except TypeError:
                     try:
                         kwargs.pop('export_animation_mode', None)
+                        kwargs.pop('export_merge_animation', None)
+                        kwargs.pop('export_anim_single_armature', None)
                         kwargs.pop('export_rest_position_armature', None)
                         kwargs['export_nla_strips'] = True
                         bpy.ops.export_scene.gltf(
@@ -292,6 +311,13 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                     self.report({'ERROR'}, f"GLB export failed: {exc}")
                     return {'CANCELLED'}
             finally:
+                for anim, action, slot in active_action_states:
+                    anim.action = action
+                    if slot is not None:
+                        try:
+                            anim.action_slot = slot
+                        except Exception:
+                            pass
                 if scene.m2nla_selected_only:
                     bpy.ops.object.select_all(action='DESELECT')
                     for obj in original_selection:

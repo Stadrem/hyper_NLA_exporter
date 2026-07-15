@@ -31,6 +31,21 @@ def _temporary_nla_split(objects, scene):
             'anim': anim,
             'original_action': anim.action,
             'original_slot': getattr(anim, 'action_slot', None),
+            'existing_track_states': [
+                {
+                    'track': track,
+                    'mute': track.mute,
+                    'is_solo': getattr(track, 'is_solo', False),
+                    'strip_states': [
+                        {
+                            'strip': strip,
+                            'mute': strip.mute,
+                        }
+                        for strip in track.strips
+                    ],
+                }
+                for track in anim.nla_tracks
+            ],
             'temp_tracks': [],
             'temp_actions': [],
         })
@@ -60,6 +75,18 @@ def _temporary_nla_split(objects, scene):
             anim = state['anim']
             original_action = state['original_action']
             original_slot = state['original_slot']
+
+            # Existing user NLA must not leak into a marker Quick Export.
+            # Preserve both controls because a solo track can suppress the
+            # temporary tracks even when that existing track is muted.
+            for track_state in state['existing_track_states']:
+                track = track_state['track']
+                track.mute = True
+                if hasattr(track, 'is_solo'):
+                    track.is_solo = False
+                for strip_state in track_state['strip_states']:
+                    strip_state['strip'].mute = True
+
             object_result = {
                 'name': obj.name,
                 'expected_track_count': len(segments),
@@ -184,6 +211,17 @@ def _temporary_nla_split(objects, scene):
                 action.use_fake_user = False
                 try:
                     bpy.data.actions.remove(action, do_unlink=True)
+                except (ReferenceError, RuntimeError):
+                    pass
+
+            for track_state in state['existing_track_states']:
+                try:
+                    track = track_state['track']
+                    track.mute = track_state['mute']
+                    if hasattr(track, 'is_solo'):
+                        track.is_solo = track_state['is_solo']
+                    for strip_state in track_state['strip_states']:
+                        strip_state['strip'].mute = strip_state['mute']
                 except (ReferenceError, RuntimeError):
                     pass
 

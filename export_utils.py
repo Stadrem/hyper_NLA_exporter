@@ -98,12 +98,6 @@ def collect_export_issues(context, export_format='FBX'):
             ))
             continue
 
-        if anim.nla_tracks:
-            issues.append((
-                'WARNING',
-                f"{obj.name}: existing NLA tracks may also be exported",
-            ))
-
         for seg in segments:
             has_key = any(
                 seg['start'] <= point.co[0] <= seg['end']
