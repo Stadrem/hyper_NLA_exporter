@@ -70,6 +70,54 @@ def test_shared_action_slot_copy():
     assert values == [22.0]
 
 
+def test_bezier_boundary_shape_is_preserved():
+    obj = bpy.data.objects.new("BezierProbe", None)
+    source = bpy.data.actions.new("BezierSource")
+    source_channelbag = addon._ensure_channelbag(source, obj)
+    source_curve = source_channelbag.fcurves.new("location", index=0)
+    left = source_curve.keyframe_points.insert(0, 0)
+    right = source_curve.keyframe_points.insert(10, 10)
+    left.interpolation = 'BEZIER'
+    right.interpolation = 'BEZIER'
+    left.handle_right_type = 'FREE'
+    left.handle_right = (4, 0)
+    right.handle_left_type = 'FREE'
+    right.handle_left = (6, 10)
+    source_curve.update()
+
+    destination = bpy.data.actions.new("BezierDestination")
+    copied = addon.copy_segment_to_action(
+        source,
+        destination,
+        3,
+        8,
+        create_boundaries=True,
+        datablock=obj,
+        source_slot=source_channelbag.slot,
+    )
+    destination_curve = addon._get_fcurves(destination)[0]
+
+    assert copied
+    samples = []
+    for source_frame in range(3, 9):
+        destination_frame = source_frame - 3
+        source_value = source_curve.evaluate(source_frame)
+        destination_value = destination_curve.evaluate(destination_frame)
+        samples.append((source_frame, source_value, destination_value))
+    handles = [
+        (
+            tuple(point.co),
+            point.handle_left_type,
+            tuple(point.handle_left),
+            point.handle_right_type,
+            tuple(point.handle_right),
+        )
+        for point in destination_curve.keyframe_points
+    ]
+    assert max(abs(source_value - destination_value)
+               for _frame, source_value, destination_value in samples) < 1e-5, (samples, handles)
+
+
 def test_temporary_split_restores_state():
     addon.register()
     scene = bpy.context.scene
@@ -109,5 +157,6 @@ if __name__ == "__main__":
     test_registration()
     test_marker_segments()
     test_shared_action_slot_copy()
+    test_bezier_boundary_shape_is_preserved()
     test_temporary_split_restores_state()
     print("HYPER_NLA_SMOKE_TESTS_OK")

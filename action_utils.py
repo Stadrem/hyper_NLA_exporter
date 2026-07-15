@@ -86,6 +86,148 @@ def _ensure_channelbag(action, datablock=None):
 #  Action splitting / merging
 # ============================================================
 
+def _lerp_point(a, b, factor):
+    """Linearly interpolate two 2D points."""
+    return (
+        a[0] + (b[0] - a[0]) * factor,
+        a[1] + (b[1] - a[1]) * factor,
+    )
+
+
+def _split_bezier(points, factor):
+    """Split a cubic Bezier and return its left and right control points."""
+    p0, p1, p2, p3 = points
+    p01 = _lerp_point(p0, p1, factor)
+    p12 = _lerp_point(p1, p2, factor)
+    p23 = _lerp_point(p2, p3, factor)
+    p012 = _lerp_point(p01, p12, factor)
+    p123 = _lerp_point(p12, p23, factor)
+    point = _lerp_point(p012, p123, factor)
+    return (
+        (p0, p01, p012, point),
+        (point, p123, p23, p3),
+    )
+
+
+def _bezier_frame_parameter(points, frame):
+    """Return the cubic parameter whose X coordinate matches *frame*."""
+    low = 0.0
+    high = 1.0
+    for _iteration in range(48):
+        factor = (low + high) * 0.5
+        left, _right = _split_bezier(points, factor)
+        x = left[3][0]
+        if x < frame:
+            low = factor
+        else:
+            high = factor
+    return (low + high) * 0.5
+
+
+def _bezier_subsegment(points, start_factor, end_factor):
+    """Return control points for a trimmed portion of a cubic Bezier."""
+    if start_factor <= 0.0:
+        right = points
+    else:
+        _left, right = _split_bezier(points, start_factor)
+
+    if end_factor >= 1.0:
+        return right
+
+    remaining = 1.0 - start_factor
+    relative_end = ((end_factor - start_factor) / remaining
+                    if remaining > 1e-12 else 1.0)
+    left, _right = _split_bezier(right, relative_end)
+    return left
+
+
+def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
+    """Preserve source interpolation when segment boundaries cut a curve.
+
+    For Bezier curves this trims the original cubic with de Casteljau's
+    algorithm and assigns the exact new boundary handles. This avoids the
+    curve distortion caused by inserting a value-only boundary key.
+    """
+    if len(copied_points) < 2:
+        return
+
+    source_keys = list(src_fc.keyframe_points)
+    epsilon = 1e-6
+
+    # FAST insertion can relocate the RNA wrappers for earlier points. Rebind
+    # every source frame to the actual destination point after all inserts.
+    destination_keys = list(dst_fc.keyframe_points)
+    rebound_points = []
+    for source_frame, _stale_point in copied_points:
+        destination_frame = source_frame + offset
+        destination_point = min(
+            destination_keys,
+            key=lambda point: abs(point.co[0] - destination_frame),
+        )
+        rebound_points.append((source_frame, destination_point))
+    rebound_points.sort(key=lambda item: item[0])
+
+    source_index = 0
+    for (frame_a, dst_a), (frame_b, dst_b) in zip(
+            rebound_points, rebound_points[1:]):
+        source_pair = None
+        while (source_index + 1 < len(source_keys) - 1
+               and frame_a >= source_keys[source_index + 1].co[0] - epsilon):
+            source_index += 1
+        if source_index + 1 < len(source_keys):
+            source_a = source_keys[source_index]
+            source_b = source_keys[source_index + 1]
+            if (source_a.co[0] - epsilon <= frame_a
+                    and frame_b <= source_b.co[0] + epsilon):
+                source_pair = (source_a, source_b)
+
+        if source_pair is None:
+            # Before the first or after the last source key, match Blender's
+            # FCurve extrapolation instead of inventing a Bezier ease.
+            dst_a.interpolation = (
+                'LINEAR' if src_fc.extrapolation == 'LINEAR' else 'CONSTANT'
+            )
+            continue
+
+        source_a, source_b = source_pair
+        dst_a.interpolation = source_a.interpolation
+        if source_a.interpolation != 'BEZIER':
+            continue
+
+        # A complete source interval already has its original handles and
+        # handle types. Only rebuild handles when a marker clips the cubic.
+        clips_start = abs(frame_a - source_a.co[0]) > epsilon
+        clips_end = abs(frame_b - source_b.co[0]) > epsilon
+        if not clips_start and not clips_end:
+            continue
+
+        points = (
+            tuple(source_a.co),
+            tuple(source_a.handle_right),
+            tuple(source_b.handle_left),
+            tuple(source_b.co),
+        )
+        start_factor = _bezier_frame_parameter(points, frame_a)
+        end_factor = _bezier_frame_parameter(points, frame_b)
+        _p0, handle_right, handle_left, _p3 = _bezier_subsegment(
+            points, start_factor, end_factor)
+
+        # Blender recalculates an AUTO/AUTO_CLAMPED handle pair together.
+        # Freeze both sides before assigning the trimmed handles so update()
+        # cannot replace the exact coordinates below.
+        dst_a.handle_left_type = 'FREE'
+        dst_a.handle_right_type = 'FREE'
+        dst_b.handle_left_type = 'FREE'
+        dst_b.handle_right_type = 'FREE'
+        dst_a.handle_right = (
+            handle_right[0] + offset,
+            handle_right[1],
+        )
+        dst_b.handle_left = (
+            handle_left[0] + offset,
+            handle_left[1],
+        )
+
 def copy_segment_to_action(source_action, dst_action, start, end,
                            create_boundaries=True, datablock=None,
                            source_slot=None):
@@ -120,6 +262,8 @@ def copy_segment_to_action(source_action, dst_action, start, end,
         need_end_key = create_boundaries and not any(
             abs(kp.co[0] - end) < 0.001 for kp in src_fc.keyframe_points
         )
+        if abs(end - start) < 0.001:
+            need_end_key = False
 
         if not keys_in_range and not need_start_key and not need_end_key:
             continue
@@ -137,12 +281,13 @@ def copy_segment_to_action(source_action, dst_action, start, end,
             )
 
         fc_has = False
+        copied_points = []
 
         if need_start_key:
             val = src_fc.evaluate(start)
             kp = new_fc.keyframe_points.insert(frame=0, value=val,
                                                 options={'FAST'})
-            kp.interpolation = 'BEZIER'
+            copied_points.append((start, kp))
             fc_has = True
 
         for src_kp in keys_in_range:
@@ -157,16 +302,19 @@ def copy_segment_to_action(source_action, dst_action, start, end,
                                    src_kp.handle_left[1])
             new_kp.handle_right = (src_kp.handle_right[0] + offset,
                                    src_kp.handle_right[1])
+            copied_points.append((src_kp.co[0], new_kp))
             fc_has = True
 
         if need_end_key:
             val = src_fc.evaluate(end)
             kp = new_fc.keyframe_points.insert(frame=end + offset, value=val,
                                                 options={'FAST'})
-            kp.interpolation = 'BEZIER'
+            copied_points.append((end, kp))
             fc_has = True
 
         if fc_has:
+            _preserve_clipped_curve_shape(
+                src_fc, new_fc, copied_points, offset)
             new_fc.update()
             has_any = True
         else:

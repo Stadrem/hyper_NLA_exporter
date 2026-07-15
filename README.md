@@ -21,8 +21,8 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 * 🚀 **One-Click Quick Export**: Automatically split, retime to frame 1, export, and clean up temporary tracks in a single operation.
 * 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose).
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
-* 📐 **Boundary Key Evaluation**: Evaluates curve values at segment starts/ends to insert missing boundaries, preserving perfect poses across splits.
-* ✅ **Export Preflight**: Checks duplicate or blank clip names, invalid markers, missing Action Slots/F-Curves, existing NLA tracks, empty clip ranges, and skinned meshes outside the export selection.
+* 📐 **Boundary Curve Preservation**: Inserts missing segment boundaries and trims Bezier handles so both poses and curve motion remain faithful across splits.
+* ✅ **Export Safety**: Checks duplicate or blank clip names, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. Existing NLA tracks are temporarily isolated during Quick Export and restored afterward.
 * 📂 **Open Export Folder**: Opens the containing folder automatically after a successful FBX/GLB export.
 * ⚙️ **Advanced Manual NLA Tools**: Easily convert timeline markers to permanent NLA tracks, merge NLA tracks back into a single Action, or run selective cleanups.
 
