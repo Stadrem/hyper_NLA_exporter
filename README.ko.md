@@ -77,7 +77,7 @@
   * *Open Folder After Export*: 내보내기에 성공하면 결과 파일이 있는 폴더를 엽니다.
 * **Quick Export (Marker Split)**:
   * *Check FBX / Check GLB*: 임시 NLA 분할을 실제로 수행한 뒤 예상/생성 트랙 수와 모든 클립의 오브젝트별 `✓`, `⚠`, `✗` 결과를 팝업으로 표시합니다. Action/Strip 내용, 이름, 프레임 범위, Action Slot, 키프레임 및 내보내기 계층을 검사하고 임시 데이터는 즉시 제거합니다. 하드 오류는 Quick Export도 차단합니다.
-  * *FBX*: 마커별로 애니메이션 테이크(Take)를 나눈 단일 `.fbx` 파일을 내보냅니다.
+  * *FBX*: 활성 Action을 가진 애니메이션 오브젝트 하나를 마커별 Take로 나누어 단일 `.fbx` 파일로 내보냅니다. 애니메이션 리그와 Action이 없는 메시 계층은 함께 선택할 수 있지만, 활성 Action을 가진 오브젝트가 여러 개면 Blender FBX exporter가 같은 이름의 Take를 안전하게 합치지 못하므로 내보내기를 차단합니다.
   * *GLB*: 마커별로 애니메이션 클립(Clip)을 나눈 단일 `.glb` 파일을 내보냅니다.
 * **Manual NLA Tools (수동 도구 foldout)**: 마커 $\rightarrow$ NLA 영구 변환, NLA $\rightarrow$ Action 통합 액션 복구, 기존 NLA 수동 내보내기 및 트랙 전체 삭제 도구를 담고 있습니다.
 
