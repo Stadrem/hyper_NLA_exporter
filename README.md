@@ -119,7 +119,15 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 
 ## 📁 File Structure
 
-* `__init__.py`: Handles addon registration, bl_info metadata definition, and module reloading.
+* `__init__.py`: Package entry point, addon metadata, and compatibility exports.
+* `action_utils.py`: Blender 5.1 Action, Slot, Channelbag, split, and merge helpers.
+* `clips.py`: Timeline marker-to-clip parsing.
+* `export_utils.py`: Preflight validation, export paths, and completion helpers.
+* `nla_split.py`: Temporary non-destructive NLA construction for Quick Export.
+* `operators.py`: Validation, export, conversion, preview, and cleanup operators.
+* `ui.py`: 3D View sidebar panel and transient UI state.
+* `registration.py`: Blender classes and RNA property registration.
+* `tests/`: Blender background smoke and end-to-end export regression tests.
 
 ---
 

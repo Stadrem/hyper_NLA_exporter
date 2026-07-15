@@ -119,7 +119,15 @@
 
 ## 📁 파일 구조
 
-* `__init__.py`: 애드온 메타데이터 정의, 등록(Register) 및 모듈 리로딩을 제어합니다.
+* `__init__.py`: 패키지 진입점, 애드온 메타데이터 및 기존 접근 호환성을 관리합니다.
+* `action_utils.py`: Blender 5.1 Action, Slot, Channelbag, 분할 및 병합 헬퍼를 관리합니다.
+* `clips.py`: 타임라인 마커를 애니메이션 클립 구간으로 해석합니다.
+* `export_utils.py`: 사전 검사, 내보내기 경로 및 완료 처리를 관리합니다.
+* `nla_split.py`: Quick Export용 임시 NLA를 비파괴 방식으로 생성하고 복구합니다.
+* `operators.py`: 검사, 내보내기, 변환, 미리보기 및 정리 Operator를 정의합니다.
+* `ui.py`: 3D View 사이드바 패널과 임시 UI 상태를 정의합니다.
+* `registration.py`: Blender 클래스와 RNA 속성의 등록 및 해제를 관리합니다.
+* `tests/`: Blender 백그라운드 스모크 테스트와 실제 내보내기 회귀 테스트를 포함합니다.
 
 ---
 
