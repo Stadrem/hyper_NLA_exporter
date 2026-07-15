@@ -19,6 +19,7 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 
 * ⚡ **Marker-Based Auto-Splitting**: Define clip names and end frames using standard timeline markers. The addon automatically calculates starts and ends.
 * 🚀 **One-Click Quick Export**: Automatically split, retime to frame 1, export, and clean up temporary tracks in a single operation.
+* 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose).
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
 * 📐 **Boundary Key Evaluation**: Evaluates curve values at segment starts/ends to insert missing boundaries, preserving perfect poses across splits.
 * ✅ **Export Preflight**: Checks duplicate or blank clip names, invalid markers, missing Action Slots/F-Curves, existing NLA tracks, empty clip ranges, and skinned meshes outside the export selection.
@@ -69,7 +70,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
   * *Export Path*: Sets the FBX/GLB output folder. The default `//Export/` means an `Export` folder beside the saved `.blend` file; the folder is created automatically.
-  * *Auto Export*: Skips the save dialog and overwrites `<blend filename>.fbx` or `.glb` directly in Export Path. The `.blend` file must be saved first. Turn this off to use the normal Save As dialog.
+  * *Auto Export (Auto Save)*: Skips the file browser and overwrites `<blend filename>.fbx` or `<blend filename>.glb` directly in **Export Path**. Save the `.blend` file first: its filename determines the export name, and relative paths such as `//Export/` are resolved beside it. This option applies to **Quick Export (Marker Split)**; turn it off to choose a filename and location in the normal file browser.
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
   * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
@@ -100,7 +101,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
    * **Marker Frame** = End frame of the clip.
    * *Example*: Marker `Walk` at frame 60 and `Run` at frame 120 splits the timeline into `1-60` (Walk) and `61-120` (Run).
 4. Open the N-Panel, click **K-Quick Tools** > **Hyper NLA Exporter**.
-5. Set **Export Path** if needed. Enable **Auto Export** for direct overwrite export, or leave it off to use the normal Save As dialog, then click **FBX** or **GLB**.
+5. Set **Export Path** if needed. For repeat exports, enable **Auto Export**: after saving the `.blend`, clicking **FBX** or **GLB** immediately overwrites `<blend filename>.fbx` or `.glb` in that folder. Leave it off to choose a filename and location in the normal file browser.
 
 ---
 
