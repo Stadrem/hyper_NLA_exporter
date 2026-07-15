@@ -250,17 +250,27 @@ def run_export_test():
     try:
         fbx_path = output_dir / "clips.fbx"
         glb_path = output_dir / "clips.glb"
+        legacy_fbx_path = output_dir / "existing_nla.fbx"
+        legacy_glb_path = output_dir / "existing_nla.glb"
         fbx_result = bpy.ops.markernla.quick_export_fbx(
             'EXEC_DEFAULT', filepath=str(fbx_path))
 
         second_cube.select_set(True)
         glb_result = bpy.ops.markernla.quick_export_glb(
             'EXEC_DEFAULT', filepath=str(glb_path))
+        legacy_fbx_result = bpy.ops.markernla.export_fbx(
+            'EXEC_DEFAULT', filepath=str(legacy_fbx_path))
+        legacy_glb_result = bpy.ops.markernla.export_glb(
+            'EXEC_DEFAULT', filepath=str(legacy_glb_path))
 
         assert fbx_result == {'FINISHED'}, fbx_result
         assert glb_result == {'FINISHED'}, glb_result
+        assert legacy_fbx_result == {'FINISHED'}, legacy_fbx_result
+        assert legacy_glb_result == {'FINISHED'}, legacy_glb_result
         assert fbx_path.stat().st_size > 0
         assert glb_path.stat().st_size > 0
+        assert legacy_fbx_path.stat().st_size > 0
+        assert legacy_glb_path.stat().st_size > 0
         fbx_data = fbx_path.read_bytes()
         assert b"First" in fbx_data
         assert b"Second" in fbx_data
@@ -274,6 +284,12 @@ def run_export_test():
             animation_samples,
             scene.render.fps / scene.render.fps_base,
         )
+        legacy_document, _legacy_binary = read_glb(legacy_glb_path)
+        assert [animation['name']
+                for animation in legacy_document['animations']] == [
+            'ExistingNLA',
+        ]
+        assert b"ExistingNLA" in legacy_fbx_path.read_bytes()
         assert cube.animation_data.action == source_action
         assert second_cube.animation_data.action == second_source_action
         assert len(cube.animation_data.nla_tracks) == 1

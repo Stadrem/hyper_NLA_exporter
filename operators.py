@@ -5,28 +5,23 @@ from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
-from .action_utils import (
-    _get_channelbag,
-    _get_fcurves,
-    _preserve_static_transforms,
-    copy_segment_to_action,
-    merge_nla_to_action,
-)
+from .action_utils import merge_nla_to_action
 from .clips import get_marker_segments
 from .export_utils import (
     _get_quick_export_targets,
+    _finish_export,
     _invoke_export_browser,
     _invoke_quick_export,
-    _open_export_folder,
     _preflight_allows_export,
     _prepare_export_destination,
-    _remember_export_directory,
+    _run_fbx_export,
+    _run_glb_export,
     _set_auto_export_filepath,
     _split_allows_export,
     collect_export_issues,
     collect_split_issues,
 )
-from .nla_split import _temporary_nla_split
+from .nla_split import _build_nla_track_for_segment, _temporary_nla_split
 
 #  Operators  – Quick Export (main workflow)
 # ============================================================
@@ -187,29 +182,14 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
             if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
-            try:
-                bpy.ops.export_scene.fbx(
-                    filepath=self.filepath,
-                    use_selection=scene.m2nla_selected_only,
-                    use_armature_deform_only=scene.m2nla_only_deform_bones,
-                    bake_anim=True,
-                    bake_anim_use_nla_strips=True,
-                    bake_anim_use_all_actions=False,
-                    bake_anim_force_startend_keying=True,
-                    add_leaf_bones=False,
-                    path_mode='AUTO',
-                )
-            except Exception as exc:
-                self.report({'ERROR'}, f"FBX export failed: {exc}")
+            if not _run_fbx_export(self, scene):
                 return {'CANCELLED'}
 
-        self.report(
-            {'INFO'},
-            f"Exported {len(clip_names)} clips → {self.filepath}"
+        return _finish_export(
+            self,
+            scene,
+            f"Exported {len(clip_names)} clips → {self.filepath}",
         )
-        _remember_export_directory(scene, self.filepath)
-        _open_export_folder(scene, self.filepath, self)
-        return {'FINISHED'}
 
 
 class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
@@ -253,20 +233,6 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
-            kwargs = dict(
-                filepath=self.filepath,
-                export_format='GLB',
-                export_animations=True,
-                # ACTIONS mode respects muted strips. Merge by NLA track name
-                # so per-object temporary Actions still become one clip.
-                export_animation_mode='ACTIONS',
-                export_merge_animation='NLA_TRACK',
-                export_anim_single_armature=False,
-                export_apply=True,
-                export_rest_position_armature=False,
-                export_def_bones=scene.m2nla_only_deform_bones,
-            )
-
             # FIX: Auto-select children if Selected Only is enabled so that 
             # glTF exporter doesn't break skinned mesh hierarchy.
             original_selection = [o for o in context.selected_objects]
@@ -292,23 +258,8 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 anim.action = None
 
             try:
-                try:
-                    bpy.ops.export_scene.gltf(
-                        use_selection=scene.m2nla_selected_only, **kwargs)
-                except TypeError:
-                    try:
-                        kwargs.pop('export_animation_mode', None)
-                        kwargs.pop('export_merge_animation', None)
-                        kwargs.pop('export_anim_single_armature', None)
-                        kwargs.pop('export_rest_position_armature', None)
-                        kwargs['export_nla_strips'] = True
-                        bpy.ops.export_scene.gltf(
-                            use_selection=scene.m2nla_selected_only, **kwargs)
-                    except Exception as exc:
-                        self.report({'ERROR'}, f"GLB export failed: {exc}")
-                        return {'CANCELLED'}
-                except Exception as exc:
-                    self.report({'ERROR'}, f"GLB export failed: {exc}")
+                if not _run_glb_export(
+                        self, scene, marker_actions=True):
                     return {'CANCELLED'}
             finally:
                 for anim, action, slot in active_action_states:
@@ -323,13 +274,11 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                     for obj in original_selection:
                         obj.select_set(True)
 
-        self.report(
-            {'INFO'},
-            f"Exported {len(clip_names)} clips → {self.filepath}"
+        return _finish_export(
+            self,
+            scene,
+            f"Exported {len(clip_names)} clips → {self.filepath}",
         )
-        _remember_export_directory(scene, self.filepath)
-        _open_export_folder(scene, self.filepath, self)
-        return {'FINISHED'}
 
 
 # ============================================================
@@ -376,43 +325,16 @@ class MARKERNLA_OT_convert(Operator):
                 if not source:
                     continue
 
-                # Action name includes object prefix to avoid collisions
-                action_name = f"{obj.name}_{seg['name']}"
-                new_action = bpy.data.actions.new(name=action_name)
-                new_action.use_fake_user = True
-                    
-                did_copy = copy_segment_to_action(
-                    source, new_action, seg['start'], seg['end'],
+                built = _build_nla_track_for_segment(
+                    obj,
+                    source,
+                    getattr(obj.animation_data, 'action_slot', None),
+                    seg,
+                    track_start=seg['start'],
                     create_boundaries=scene.m2nla_boundary_keys,
-                    datablock=obj,
-                    source_slot=getattr(obj.animation_data,
-                                        'action_slot', None),
                 )
-
-                _preserve_static_transforms(
-                    new_action, obj, source,
-                    source_slot=getattr(obj.animation_data,
-                                        'action_slot', None),
-                )
-                has_content = did_copy or bool(_get_fcurves(new_action))
-
-                if has_content:
-                    dst_cb = _get_channelbag(new_action)
-                    slot = getattr(dst_cb, 'slot', None)
-
-                    track = obj.animation_data.nla_tracks.new()
-                    track.name = seg['name']
-                    strip = track.strips.new(
-                        name=seg['name'],
-                        start=seg['start'],
-                        action=new_action,
-                    )
-                    strip.name = seg['name']
-                    if slot and hasattr(strip, 'action_slot'):
-                        strip.action_slot = slot
+                if built is not None:
                     total_created += 1
-                else:
-                    bpy.data.actions.remove(new_action)
 
         if scene.m2nla_unlink_source:
             for obj in objs:
@@ -497,26 +419,11 @@ class MARKERNLA_OT_export_fbx(Operator, ExportHelper):
         scene = context.scene
         if not _prepare_export_destination(scene, self):
             return {'CANCELLED'}
-        try:
-            bpy.ops.export_scene.fbx(
-                filepath=self.filepath,
-                use_selection=scene.m2nla_selected_only,
-                use_armature_deform_only=scene.m2nla_only_deform_bones,
-                bake_anim=True,
-                bake_anim_use_nla_strips=True,
-                bake_anim_use_all_actions=False,
-                bake_anim_force_startend_keying=True,
-                add_leaf_bones=False,
-                path_mode='AUTO',
-            )
-        except Exception as exc:
-            self.report({'ERROR'}, f"FBX export failed: {exc}")
+        if not _run_fbx_export(self, scene):
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"Exported FBX → {self.filepath}")
-        _remember_export_directory(scene, self.filepath)
-        _open_export_folder(scene, self.filepath, self)
-        return {'FINISHED'}
+        return _finish_export(
+            self, scene, f"Exported FBX → {self.filepath}")
 
 
 class MARKERNLA_OT_export_glb(Operator, ExportHelper):
@@ -539,34 +446,11 @@ class MARKERNLA_OT_export_glb(Operator, ExportHelper):
         scene = context.scene
         if not _prepare_export_destination(scene, self):
             return {'CANCELLED'}
-        kwargs = dict(
-            filepath=self.filepath,
-            export_format='GLB',
-            export_animations=True,
-            export_animation_mode='NLA_TRACKS',
-            export_def_bones=scene.m2nla_only_deform_bones,
-        )
-        try:
-            bpy.ops.export_scene.gltf(
-                use_selection=scene.m2nla_selected_only, **kwargs)
-        except TypeError:
-            try:
-                # Fallback for older Blender versions
-                kwargs.pop('export_animation_mode', None)
-                kwargs['export_nla_strips'] = True
-                bpy.ops.export_scene.gltf(
-                    use_selection=scene.m2nla_selected_only, **kwargs)
-            except Exception as exc:
-                self.report({'ERROR'}, f"GLB export failed: {exc}")
-                return {'CANCELLED'}
-        except Exception as exc:
-            self.report({'ERROR'}, f"GLB export failed: {exc}")
+        if not _run_glb_export(self, scene):
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"Exported GLB → {self.filepath}")
-        _remember_export_directory(scene, self.filepath)
-        _open_export_folder(scene, self.filepath, self)
-        return {'FINISHED'}
+        return _finish_export(
+            self, scene, f"Exported GLB → {self.filepath}")
 
 
 # ---- Segment preview (frame-range) ----------------------------------------
