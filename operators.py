@@ -1,7 +1,7 @@
 """Operators for validation, export, conversion, preview, and cleanup."""
 
 import bpy
-from bpy.props import EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
@@ -152,27 +152,55 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
 
     filename_ext  = ".fbx"
     filter_glob: StringProperty(default="*.fbx", options={'HIDDEN'})
+    allow_multiple_fbx_targets: BoolProperty(
+        name="Allow Multiple FBX Targets",
+        description=(
+            "Experimental: bypass the one-animated-object safety check. "
+            "Blender may create incomplete animation takes"
+        ),
+        default=False,
+        options={'HIDDEN'},
+    )
 
     @classmethod
     def poll(cls, context):
         return len(context.scene.timeline_markers) > 0
 
     def invoke(self, context, event):
+        if self.allow_multiple_fbx_targets:
+            # A test export must never inherit Auto Export and silently
+            # overwrite the normal production FBX.
+            return _invoke_export_browser(
+                self,
+                context,
+                event,
+                filename_suffix="_multi_rig_test",
+            )
         return _invoke_quick_export(self, context, event)
 
     def execute(self, context):
         scene = context.scene
-        if not _set_auto_export_filepath(self, scene):
+        if (not self.allow_multiple_fbx_targets
+                and not _set_auto_export_filepath(self, scene)):
             return {'CANCELLED'}
         if not _prepare_export_destination(scene, self):
             return {'CANCELLED'}
-        if not _preflight_allows_export(self, context, 'FBX'):
+        if not _preflight_allows_export(
+                self,
+                context,
+                'FBX',
+                allow_multiple_fbx_targets=self.allow_multiple_fbx_targets):
             return {'CANCELLED'}
         anim_objs = _get_quick_export_targets(context)
 
         if not anim_objs:
             self.report({'ERROR'}, "No valid objects with animation data found")
             return {'CANCELLED'}
+        if self.allow_multiple_fbx_targets and len(anim_objs) > 1:
+            self.report({'WARNING'}, (
+                "Experimental multi-target FBX export: Blender may produce "
+                "incomplete animation takes"
+            ))
 
         with _temporary_nla_split(anim_objs, scene) as split_result:
             clip_names = split_result['clip_names']

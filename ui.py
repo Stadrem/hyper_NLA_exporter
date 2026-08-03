@@ -129,6 +129,20 @@ class MARKERNLA_PT_panel(Panel):
         row.operator("markernla.quick_export_fbx", text="FBX", icon='EXPORT')
         row.operator("markernla.quick_export_glb", text="GLB", icon='EXPORT')
 
+        box.separator()
+        experimental = box.column(align=True)
+        experimental.alert = True
+        op = experimental.operator(
+            "markernla.quick_export_fbx",
+            text="Experimental Multi-Rig FBX",
+            icon='ERROR',
+        )
+        op.allow_multiple_fbx_targets = True
+        experimental.label(
+            text="Test only: Blender may create incomplete takes",
+            icon='INFO',
+        )
+
         layout.separator()
 
         # ── Manual NLA Tools (advanced) ──────────────────────
