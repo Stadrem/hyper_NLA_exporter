@@ -38,18 +38,20 @@ def collect_export_issues(context, export_format='FBX',
     """Return preflight issues as ``(severity, message)`` tuples."""
     scene = context.scene
     issues = []
+    first_clip_start = int(getattr(scene, 'm2nla_start_frame', 1))
     segments = [seg for seg in get_marker_segments(scene)
                 if not getattr(seg['marker'], 'm2nla_muted', False)]
 
     invalid_markers = [marker for marker in scene.timeline_markers
                        if (not getattr(marker, 'm2nla_muted', False)
-                           and marker.frame < 1)]
+                           and marker.frame < first_clip_start)]
     if invalid_markers:
         names = ", ".join(marker.name or "<unnamed>"
                           for marker in invalid_markers[:3])
         issues.append((
             'ERROR',
-            f"Markers before frame 1 are not exportable: {names}",
+            "Markers before First Clip Start "
+            f"({first_clip_start}) are not exportable: {names}",
         ))
 
     if not segments:

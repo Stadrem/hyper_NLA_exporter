@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Hyper NLA Exporter",
     "author": "Kim Dongsu",
-    "version": (2, 4, 1),
+    "version": (2, 4, 2),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > K-Quick Tools",
     "description": (
