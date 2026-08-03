@@ -15,8 +15,9 @@ def get_marker_segments(scene):
 
     segments = []
     
-    # Export clips use the standard 1-based animation range.
-    seg_start = 1
+    # The first source segment is configurable, while exported clips are
+    # still retimed to the standard 1-based animation range.
+    seg_start = int(getattr(scene, "m2nla_start_frame", 1))
 
     for marker in markers:
         if marker.frame < seg_start:

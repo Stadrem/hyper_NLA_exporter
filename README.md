@@ -17,7 +17,7 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 
 ## 🌟 Key Features
 
-* ⚡ **Marker-Based Auto-Splitting**: Define clip names and end frames using standard timeline markers. The addon automatically calculates starts and ends.
+* ⚡ **Marker-Based Auto-Splitting**: Define clip names and end frames using standard timeline markers. Set **First Clip Start** in the panel, and the addon calculates every segment automatically.
 * 🚀 **One-Click Quick Export**: Automatically split, retime to frame 1, export, and clean up temporary tracks in a single operation.
 * 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose).
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
@@ -37,6 +37,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ ▼ 🎬 Hyper NLA Exporter                  │
 ├──────────────────────────────────────────┤
 │ ┌─ Marker Segments ──────────────────┐   │
+│ │ First Clip Start: [ 1 ]            │   │
 │ │ 👁 [▶] [ Walk       ] 1~60 (60f) 🗑 │   │
 │ │ 👁 [▶] [ Run        ] 61~120(60f) 🗑 │   │
 │ │ [Reset Range]                      │   │
@@ -56,6 +57,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 │ ┌─ Quick Export (Marker Split) ──────┐   │
 │ │    [Check FBX]      [Check GLB]     │   │
 │ │      [   FBX   ]      [   GLB   ]      │   │
+│ │ FBX: One rig only · GLB: Multi-rig │   │
 │ └────────────────────────────────────┘   │
 │                                          │
 │ [▶ Manual NLA Tools]                     │
@@ -63,10 +65,11 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 ```
 
 * **Marker Segments**: Displays parsed timeline markers and provides inline management.
+  * *First Clip Start*: Sets the source frame where the first marker clip begins. The default is frame 1; exported clips are still retimed to begin at frame 1.
   * *Mute Toggle (Eye Icon)*: Exclude specific clips from Quick Export without deleting the marker.
   * *Preview (Play Icon)*: Set the timeline playback range to this segment for a quick preview.
   * *Rename/Delete*: Rename markers inline via the text field or delete them instantly via the trash icon.
-  * *Reset Range*: Restores the timeline playback range to cover the entire animation (from frame 1 to the last marker).
+  * *Reset Range*: Restores the timeline playback range from **First Clip Start** to the last marker.
 * **Targets**: Displays how many active animated objects will be processed and the active action name.
 * **Settings**:
   * *Export Path*: Sets the FBX/GLB output folder. The default `//Export/` means an `Export` folder beside the saved `.blend` file; the folder is created automatically.
@@ -76,9 +79,10 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
+  * The format note below the buttons warns in red when the current export scope contains multiple animated targets. FBX supports one animated rig; GLB supports multi-rig scenes.
   * *Check FBX / Check GLB*: Performs a temporary NLA split and shows expected/created track counts plus per-object `✓`, `⚠`, or `✗` results for every clip. It validates Action/Strip content, names, frame ranges, Action Slots, keyframes, and hierarchy, then removes all temporary data. Hard errors also block Quick Export.
   * *FBX*: Splits one animated object into separate takes in a single `.fbx` file. Select the animated rig plus any non-animated mesh hierarchy; multiple objects with active Actions are blocked because Blender's FBX exporter does not merge their same-named takes safely.
-  * *GLB*: Splits and exports as separate clips in a single `.glb` file.
+  * *GLB*: Splits and exports as separate clips in a single `.glb` file, including multiple animated rigs in the same scene.
 * **Manual NLA Tools (Foldout)**: Contains permanent conversion actions (`Markers → NLA` and `NLA → Action`), existing NLA exporters, and cleanups.
 
 ---
@@ -97,6 +101,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 1. Save your `.blend` file (relative path resolution).
 2. Select your animated rig/object(s).
 3. Place timeline markers to define your animation cuts:
+   * **First Clip Start** = Source frame where the first clip begins (default: `1`).
    * **Marker Name** = Clip/Take Name.
    * **Marker Frame** = End frame of the clip.
    * *Example*: Marker `Walk` at frame 60 and `Run` at frame 120 splits the timeline into `1-60` (Walk) and `61-120` (Run).

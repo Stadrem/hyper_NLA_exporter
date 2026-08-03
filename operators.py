@@ -506,14 +506,14 @@ class MARKERNLA_OT_reset_frame_range(Operator):
     bl_idname  = "markernla.reset_frame_range"
     bl_label   = "Reset Range"
     bl_description = (
-        "Restore the timeline range: Start = 1, "
+        "Restore the timeline range: Start = First Clip Start, "
         "End = last marker frame"
     )
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
         scene = context.scene
-        scene.frame_start = 1
+        scene.frame_start = scene.m2nla_start_frame
         markers = scene.timeline_markers
         if markers:
             scene.frame_end = max(m.frame for m in markers)

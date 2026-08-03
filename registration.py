@@ -1,7 +1,7 @@
 """Addon class and RNA property registration."""
 
 import bpy
-from bpy.props import BoolProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, IntProperty, PointerProperty, StringProperty
 
 from .operators import (
     MARKERNLA_OT_cleanup,
@@ -43,6 +43,7 @@ _classes = (
 _scene_props = (
     "m2nla_only_deform_bones",
     "m2nla_boundary_keys",
+    "m2nla_start_frame",
     "m2nla_clear_nla",
     "m2nla_unlink_source",
     "m2nla_selected_only",
@@ -109,6 +110,14 @@ def register():
             "If off, unkeyed channels may reset to rest pose within segments"
         ),
         default=True,
+    )
+    S.m2nla_start_frame = IntProperty(
+        name="First Clip Start",
+        description=(
+            "Source frame where the first marker clip begins; exported "
+            "clips are still retimed to start at frame 1"
+        ),
+        default=1,
     )
     S.m2nla_clear_nla = BoolProperty(
         name="Clear Existing NLA",
