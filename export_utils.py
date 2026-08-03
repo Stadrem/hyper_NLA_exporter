@@ -33,7 +33,8 @@ def _with_descendants(objects):
     return result
 
 
-def collect_export_issues(context, export_format='FBX'):
+def collect_export_issues(context, export_format='FBX',
+                          allow_multiple_fbx_targets=False):
     """Return preflight issues as ``(severity, message)`` tuples."""
     scene = context.scene
     issues = []
@@ -78,7 +79,9 @@ def collect_export_issues(context, export_format='FBX'):
     targets = _get_quick_export_targets(context)
     if not targets:
         issues.append(('ERROR', "No target object has an active Action"))
-    elif export_format == 'FBX' and len(targets) > 1:
+    elif (export_format == 'FBX'
+          and len(targets) > 1
+          and not allow_multiple_fbx_targets):
         issues.append((
             'ERROR',
             "FBX Quick Export supports one animated object at a time; "
@@ -138,9 +141,14 @@ def collect_export_issues(context, export_format='FBX'):
     return issues
 
 
-def _preflight_allows_export(operator, context, export_format):
+def _preflight_allows_export(operator, context, export_format,
+                             allow_multiple_fbx_targets=False):
     """Report preflight results and return False when errors block export."""
-    issues = collect_export_issues(context, export_format)
+    issues = collect_export_issues(
+        context,
+        export_format,
+        allow_multiple_fbx_targets=allow_multiple_fbx_targets,
+    )
     errors = [message for severity, message in issues
               if severity == 'ERROR']
     warnings = [message for severity, message in issues
@@ -289,7 +297,7 @@ def _invoke_quick_export(operator, context, event):
     return operator.execute(context)
 
 
-def _invoke_export_browser(operator, context, event):
+def _invoke_export_browser(operator, context, event, filename_suffix=""):
     """Open an ExportHelper browser at the scene's configured directory."""
     directory = _export_directory(context.scene)
     try:
@@ -301,8 +309,11 @@ def _invoke_export_browser(operator, context, event):
         )
         directory = os.path.dirname(bpy.data.filepath) or os.getcwd()
 
-    operator.filepath = os.path.join(
-        directory, _default_export_name(operator.filename_ext))
+    filename = _default_export_name(operator.filename_ext)
+    if filename_suffix:
+        stem, extension = os.path.splitext(filename)
+        filename = f"{stem}{filename_suffix}{extension}"
+    operator.filepath = os.path.join(directory, filename)
     return ExportHelper.invoke(operator, context, event)
 
 
