@@ -1,5 +1,7 @@
 """Blender 5.1 Action, Slot, Channelbag, and NLA merge helpers."""
 
+from bisect import bisect_left
+
 import bpy
 from bpy_extras import anim_utils
 
@@ -187,15 +189,24 @@ def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
 
     # FAST insertion can relocate the RNA wrappers for earlier points. Rebind
     # every source frame to the actual destination point after all inserts.
+    # keyframe_points stay sorted by frame, so a binary search replaces the
+    # per-point linear scan that made this quadratic on dense curves.
     destination_keys = list(dst_fc.keyframe_points)
+    if not destination_keys:
+        return
+    destination_frames = [point.co[0] for point in destination_keys]
     rebound_points = []
     for source_frame, _stale_point in copied_points:
         destination_frame = source_frame + offset
-        destination_point = min(
-            destination_keys,
-            key=lambda point: abs(point.co[0] - destination_frame),
-        )
-        rebound_points.append((source_frame, destination_point))
+        index = bisect_left(destination_frames, destination_frame)
+        if index >= len(destination_frames):
+            index = len(destination_frames) - 1
+        elif index > 0 and (
+                abs(destination_frames[index - 1] - destination_frame)
+                <= abs(destination_frames[index] - destination_frame)):
+            # A tie resolves to the lower index, as the previous min() did.
+            index -= 1
+        rebound_points.append((source_frame, destination_keys[index]))
     rebound_points.sort(key=lambda item: item[0])
 
     source_index = 0
