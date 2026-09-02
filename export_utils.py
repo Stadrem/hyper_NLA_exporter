@@ -99,6 +99,18 @@ def collect_export_issues(context, export_format='FBX',
         if blank_names:
             issues.append(('ERROR', "One or more clip names are empty"))
 
+        # An NLA strip cannot have zero length, so Blender widens a
+        # single-frame clip to two frames and the exported take would no
+        # longer match the marker layout. Report the marker instead.
+        short_clips = [seg['name'].strip() or "<unnamed>"
+                       for seg in segments if seg['length'] < 2]
+        if short_clips:
+            issues.append((
+                'ERROR',
+                "Clips need at least 2 frames; move the marker later: "
+                + ", ".join(short_clips[:4]),
+            ))
+
         name_counts = {}
         for seg in segments:
             name = seg['name'].strip()

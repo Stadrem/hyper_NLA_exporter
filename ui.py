@@ -47,6 +47,10 @@ class MARKERNLA_PT_panel(Panel):
                     name = seg['marker'].name
                     name_counts[name] = name_counts.get(name, 0) + 1
             has_duplicates = any(c > 1 for c in name_counts.values())
+            has_short_clips = any(
+                seg['length'] < 2
+                and not getattr(seg['marker'], "m2nla_muted", False)
+                for seg in segments)
 
             col = box.column(align=True)
             for seg in segments:
@@ -67,7 +71,10 @@ class MARKERNLA_PT_panel(Panel):
                     name_row.alert = True
                 name_row.prop(marker, "name", text="")
 
-                row.label(text=f"{seg['start']}~{seg['end']} ({seg['length']}f)")
+                range_row = row.row(align=True)
+                range_row.alert = not is_muted and seg['length'] < 2
+                range_row.label(
+                    text=f"{seg['start']}~{seg['end']} ({seg['length']}f)")
 
                 del_op = row.operator("markernla.delete_marker", text="", icon='TRASH', emboss=False)
                 del_op.marker_name = marker.name
@@ -75,6 +82,8 @@ class MARKERNLA_PT_panel(Panel):
 
             if has_duplicates:
                 box.label(text="⚠️ Duplicate unmuted marker names!", icon='ERROR')
+            if has_short_clips:
+                box.label(text="⚠️ Clips need at least 2 frames!", icon='ERROR')
 
             row = box.row(align=True)
             row.operator("markernla.reset_frame_range", icon='LOOP_BACK')
