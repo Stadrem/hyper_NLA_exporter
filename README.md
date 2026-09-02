@@ -123,7 +123,10 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 3. **Empty Actions are ignored, wrong slots are not**:
    * A skinned mesh that carries a leftover Action with no keyframes is not an export target. Without this, that mesh would count as a second animated object and block FBX Quick Export, even though it contributes nothing.
    * If an Action *does* hold F-Curves but the object points at a slot that has none, the object would export without its animation. That stays a preflight error naming the object and the Action.
-4. **Blender 5.1 Layered Action Architecture**:
+4. **The export does not depend on the playhead**:
+   * Blender's FBX exporter writes each bone's default `Lcl Translation` / `Lcl Rotation` from the pose evaluated at the current frame. A viewer or engine that falls back to those defaults for a bone would show one clip holding another clip's pose, depending on where the playhead happened to sit at export time.
+   * Quick Export pins the playhead to **First Clip Start** while it builds the temporary split and restores it afterwards, so the same scene always produces the same file.
+5. **Blender 5.1 Layered Action Architecture**:
    * Supports Blender 5.x's Slot, Layer, Strip, and Channelbag systems. When multiple objects share one Action, only the F-Curves from each object's assigned Action Slot are split.
 
 ---

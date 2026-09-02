@@ -141,9 +141,10 @@ def _temporary_nla_split(objects, scene):
         'objects': [],
     }
 
-    # Backup original scene frame range
+    # Backup original scene frame range and playhead
     orig_frame_start = scene.frame_start
     orig_frame_end = scene.frame_end
+    orig_frame_current = scene.frame_current
     
     # Calculate max segment length to cover all animations
     max_len = max((seg['length'] for seg in segments), default=1)
@@ -228,16 +229,25 @@ def _temporary_nla_split(objects, scene):
         scene.frame_start = 1
         scene.frame_end = max_len
 
-        # frame_set re-evaluates the depsgraph, so the temporary tracks are
-        # visible to the exporters without poking the scene depsgraph.
-        scene.frame_set(scene.frame_current)
+        # The FBX exporter writes every bone's default Lcl Translation and
+        # Lcl Rotation from the pose evaluated at the current frame, so the
+        # exported file used to depend on where the playhead happened to sit:
+        # a consumer that falls back to those defaults showed one clip with
+        # another clip's pose. Pin the playhead to the first clip's start so
+        # the same scene always produces the same file. frame_set also
+        # re-evaluates the depsgraph, making the temporary tracks visible.
+        scene.frame_set(int(getattr(scene, 'm2nla_start_frame', 1)))
 
         split_result['clip_names'] = sorted(clip_names)
         yield split_result
     finally:
-        # Restore scene frame range
+        # Restore scene frame range and playhead
         scene.frame_start = orig_frame_start
         scene.frame_end = orig_frame_end
+        try:
+            scene.frame_set(orig_frame_current)
+        except (ReferenceError, RuntimeError):
+            pass
 
         for state in object_states:
             anim = state['anim']

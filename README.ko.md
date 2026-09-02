@@ -123,7 +123,10 @@
 3. **빈 Action은 무시하고, 잘못된 슬롯은 차단합니다**:
    * 키프레임이 하나도 없는 Action이 스킨드 메시에 남아 있어도 내보내기 대상으로 세지 않습니다. 이 처리가 없으면 아무것도 기여하지 않는 메시가 두 번째 애니메이션 오브젝트로 잡혀 FBX Quick Export가 막힙니다.
    * 반대로 Action에 F-Curve가 있는데 오브젝트가 비어 있는 슬롯을 가리키는 경우에는 애니메이션이 빠진 채로 내보내지므로, 오브젝트와 Action 이름을 알려주는 사전 검사 오류로 남깁니다.
-4. **Blender 5.1 Layered Action 애니메이션 구조**:
+4. **내보내기 결과는 플레이헤드 위치에 좌우되지 않습니다**:
+   * Blender FBX exporter는 각 본의 기본 `Lcl Translation` / `Lcl Rotation`을 내보낼 때의 현재 프레임 포즈로 기록합니다. 특정 본에 대해 이 기본값으로 폴백하는 뷰어나 엔진에서는, 내보낼 때 플레이헤드가 어디 있었는지에 따라 한 클립이 다른 클립의 포즈를 그대로 들고 있는 현상이 생깁니다.
+   * Quick Export는 임시 분할을 만드는 동안 플레이헤드를 **First Clip Start**로 고정했다가 끝나면 원래 위치로 되돌리므로, 같은 씬은 항상 같은 파일을 만듭니다.
+5. **Blender 5.1 Layered Action 애니메이션 구조**:
    * 블렌더 5.x의 최신 데이터 레이아웃(Action $\rightarrow$ Slot $\rightarrow$ Layer $\rightarrow$ Strip $\rightarrow$ Channelbag)을 지원합니다. 여러 오브젝트가 하나의 Action을 공유하더라도 각 오브젝트에 지정된 Action Slot의 F-Curve만 분할합니다.
 
 ---
