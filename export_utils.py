@@ -289,9 +289,13 @@ def _run_glb_export(operator, scene, marker_actions=False):
 
 
 def _finish_export(operator, scene, message):
-    """Report export success and update shared destination state."""
+    """Report export success and run the post-export folder action.
+
+    Export Path is a user setting and stays exactly as configured. Rewriting
+    it to the last browsed folder used to discard the blend-relative default
+    and silently redirect Auto Export to a one-off destination.
+    """
     operator.report({'INFO'}, message)
-    _remember_export_directory(scene, operator.filepath)
     _open_export_folder(scene, operator.filepath, operator)
     return {'FINISHED'}
 
@@ -472,15 +476,6 @@ def _split_allows_export(operator, split_result):
             f"NLA split warnings ({len(warnings)}): {warnings[0]}",
         )
     return True
-
-
-def _remember_export_directory(scene, filepath):
-    """Keep the last successful directory as the next export destination."""
-    directory = os.path.dirname(bpy.path.abspath(filepath))
-    configured = _export_directory(scene)
-    if os.path.normcase(directory) == os.path.normcase(configured):
-        return
-    scene.m2nla_export_path = directory + os.sep
 
 
 # ============================================================

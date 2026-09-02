@@ -32,7 +32,6 @@ from .export_utils import (
     _open_export_folder,
     _preflight_allows_export,
     _prepare_export_destination,
-    _remember_export_directory,
     _set_auto_export_filepath,
     _split_allows_export,
     _with_descendants,
