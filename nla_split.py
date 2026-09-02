@@ -228,11 +228,9 @@ def _temporary_nla_split(objects, scene):
         scene.frame_start = 1
         scene.frame_end = max_len
 
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        if depsgraph:
-            depsgraph.update()
-        current_frame = scene.frame_current
-        scene.frame_set(current_frame)
+        # frame_set re-evaluates the depsgraph, so the temporary tracks are
+        # visible to the exporters without poking the scene depsgraph.
+        scene.frame_set(scene.frame_current)
 
         split_result['clip_names'] = sorted(clip_names)
         yield split_result
