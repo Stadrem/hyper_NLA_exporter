@@ -76,7 +76,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Auto Export (Auto Save)*: Skips the file browser and overwrites `<blend filename>.fbx` or `<blend filename>.glb` directly in **Export Path**. Save the `.blend` file first: its filename determines the export name, and relative paths such as `//Export/` are resolved beside it. This option applies to **Quick Export (Marker Split)**; turn it off to choose a filename and location in the normal file browser.
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
-  * *Selected Only*: Processes only the active selection. For GLB export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete.
+  * *Selected Only*: Processes only the active selection. For Quick Export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete in both FBX and GLB.
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
   * The format note below the buttons warns in red when the current export scope contains multiple animated targets. FBX supports one animated rig; GLB supports multi-rig scenes.
@@ -113,7 +113,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 ## ⚠️ Technical Notes & Constraints
 
 1. **GLB/glTF Hierarchy Flattening & Scale Preservation**:
-   * With `Selected Only` enabled, Quick Export GLB temporarily selects every descendant of the selected objects and exports with `use_selection=True`. The original selection is restored after export.
+   * With `Selected Only` enabled, Quick Export temporarily selects every descendant of the selected objects and exports with `use_selection=True`. This applies to both FBX and GLB, so selecting a rig alone never drops its skinned meshes. Only the objects the addon selected are deselected afterwards, leaving the original selection untouched.
    * Select the rig's root object to include its skinned meshes and attachments, preventing missing hierarchy nodes, duplicated meshes, or misplaced attachments in NLA track mode.
    * With `Selected Only` disabled, the entire scene is exported.
    * It also automatically disables `export_rest_position_armature` to preserve the active pose bone scale (e.g. 100x scales), preventing joints from resetting to a 1.0 scale during export.

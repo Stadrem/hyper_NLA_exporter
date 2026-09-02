@@ -1,5 +1,6 @@
 """Export validation, destination, and completion helpers."""
 
+from contextlib import contextmanager
 import os
 
 import bpy
@@ -31,6 +32,43 @@ def _with_descendants(objects):
                 result.add(child)
                 pending.append(child)
     return result
+
+
+@contextmanager
+def _temporary_descendant_selection(context):
+    """Temporarily add the selection's children for a use_selection export.
+
+    A rig is normally selected on its own, so exporting the raw selection
+    drops the skinned meshes parented under it. Both Quick Export formats
+    run with ``use_selection``, so both need the hierarchy completed.
+
+    Only the objects this helper selected are deselected afterwards, and the
+    restore uses ``select_set`` rather than ``bpy.ops.object.select_all``,
+    which requires Object mode and would raise inside the ``finally`` block.
+    """
+    if not context.scene.m2nla_selected_only:
+        yield
+        return
+
+    original = set(context.selected_objects)
+    added = []
+    try:
+        for obj in _with_descendants(original):
+            if obj in original:
+                continue
+            try:
+                obj.select_set(True)
+            except RuntimeError:
+                # Not in the current view layer; the exporter cannot use it.
+                continue
+            added.append(obj)
+        yield
+    finally:
+        for obj in added:
+            try:
+                obj.select_set(False)
+            except (ReferenceError, RuntimeError):
+                pass
 
 
 def collect_export_issues(context, export_format='FBX',
@@ -122,8 +160,7 @@ def collect_export_issues(context, export_format='FBX',
                 ))
 
     if scene.m2nla_selected_only and targets:
-        included = (set(scoped_objects) if export_format == 'FBX'
-                    else _with_descendants(scoped_objects))
+        included = _with_descendants(scoped_objects)
         target_armatures = {obj for obj in targets
                             if obj.type == 'ARMATURE'}
         for obj in scene.objects:
