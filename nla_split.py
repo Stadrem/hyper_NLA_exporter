@@ -9,11 +9,30 @@ from .action_utils import (
     _get_fcurves,
     _preserve_static_transforms,
     copy_segment_to_action,
+    mark_generated_action,
 )
 from .clips import get_marker_segments
 
 #  Temporary NLA split for export
 # ============================================================
+
+def _fit_strip_to_segment(strip, segment):
+    """Pin *strip* to the full segment length.
+
+    ``strips.new`` derives the strip range from the Action's *keyed* range.
+    With Create Boundary Keys off that range starts at the first real key
+    instead of the segment start, so the clip would be exported both too
+    short and shifted in time. Declaring the used Action range explicitly
+    makes Blender recompute the strip bounds from the segment, and is a
+    no-op when boundary keys already sit on both ends.
+    """
+    action_end = float(max(int(segment['length']), 1) - 1)
+    try:
+        strip.action_frame_start = 0.0
+        strip.action_frame_end = action_end
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
 
 def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
                                  track_start, create_boundaries):
@@ -25,6 +44,7 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
     action_name = f"{obj.name}_{segment['name']}"
     action = bpy.data.actions.new(name=action_name)
     action.use_fake_user = True
+    mark_generated_action(action)
 
     did_copy = copy_segment_to_action(
         source_action,
@@ -59,6 +79,7 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
     strip.name = segment['name']
     if slot and hasattr(strip, 'action_slot'):
         strip.action_slot = slot
+    _fit_strip_to_segment(strip, segment)
 
     key_count = sum(
         len(fcurve.keyframe_points)
