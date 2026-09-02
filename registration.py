@@ -135,8 +135,8 @@ def register():
     S.m2nla_selected_only = BoolProperty(
         name="Selected Only",
         description=(
-            "Export only selected objects; Quick GLB also includes all "
-            "descendants of the selection"
+            "Export only selected objects; Quick Export also includes all "
+            "descendants of the selection so skinned meshes are not dropped"
         ),
         default=True,
     )

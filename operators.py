@@ -18,6 +18,7 @@ from .export_utils import (
     _run_glb_export,
     _set_auto_export_filepath,
     _split_allows_export,
+    _temporary_descendant_selection,
     collect_export_issues,
     collect_split_issues,
 )
@@ -210,8 +211,9 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
             if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
-            if not _run_fbx_export(self, scene):
-                return {'CANCELLED'}
+            with _temporary_descendant_selection(context):
+                if not _run_fbx_export(self, scene):
+                    return {'CANCELLED'}
 
         return _finish_export(
             self,
@@ -261,17 +263,6 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             if not _split_allows_export(self, split_result):
                 return {'CANCELLED'}
 
-            # FIX: Auto-select children if Selected Only is enabled so that 
-            # glTF exporter doesn't break skinned mesh hierarchy.
-            original_selection = [o for o in context.selected_objects]
-            if scene.m2nla_selected_only:
-                def select_recursive(obj):
-                    for child in obj.children:
-                        child.select_set(True)
-                        select_recursive(child)
-                for obj in original_selection:
-                    select_recursive(obj)
-
             # ACTIONS mode would also export each source Action. Temporarily
             # detach only the active Action; the surrounding split context
             # keeps the original Action and slot available for restoration.
@@ -286,9 +277,10 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                 anim.action = None
 
             try:
-                if not _run_glb_export(
-                        self, scene, marker_actions=True):
-                    return {'CANCELLED'}
+                with _temporary_descendant_selection(context):
+                    if not _run_glb_export(
+                            self, scene, marker_actions=True):
+                        return {'CANCELLED'}
             finally:
                 for anim, action, slot in active_action_states:
                     anim.action = action
@@ -297,10 +289,6 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
                             anim.action_slot = slot
                         except Exception:
                             pass
-                if scene.m2nla_selected_only:
-                    bpy.ops.object.select_all(action='DESELECT')
-                    for obj in original_selection:
-                        obj.select_set(True)
 
         return _finish_export(
             self,
