@@ -5,6 +5,37 @@ from bpy_extras import anim_utils
 
 
 # ============================================================
+#  Generated-Action bookkeeping
+# ============================================================
+#
+# Every Action this addon creates is tagged, so the cleanup paths can drop a
+# fake user from their own output without ever touching an Action the user
+# authored by hand.
+
+_GENERATED_ACTION_TAG = "m2nla_generated"
+
+
+def mark_generated_action(action):
+    """Tag *action* as created by this addon."""
+    action[_GENERATED_ACTION_TAG] = True
+
+
+def is_generated_action(action):
+    """Return True when *action* was created by this addon."""
+    return bool(action.get(_GENERATED_ACTION_TAG, False))
+
+
+def release_generated_action(action):
+    """Drop the fake user only from an Action this addon created.
+
+    A user-authored Action keeps its fake user, so removing NLA tracks can
+    never delete animation this addon did not generate.
+    """
+    if action is not None and is_generated_action(action):
+        action.use_fake_user = False
+
+
+# ============================================================
 #  Layered Action helpers  (Blender 5.1)
 # ============================================================
 #

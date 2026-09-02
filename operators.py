@@ -5,7 +5,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
-from .action_utils import merge_nla_to_action
+from .action_utils import merge_nla_to_action, release_generated_action
 from .clips import get_marker_segments
 from .export_utils import (
     _get_quick_export_targets,
@@ -366,7 +366,14 @@ class MARKERNLA_OT_convert(Operator):
 
         if scene.m2nla_unlink_source:
             for obj in objs:
-                obj.animation_data.action = None
+                anim = obj.animation_data
+                source = anim.action
+                if source is not None:
+                    # Detaching can drop the Action's only user. Guarantee
+                    # the "preserved in the blend file" behaviour promised
+                    # by the Unlink Source Action description.
+                    source.use_fake_user = True
+                anim.action = None
 
         if total_created == 0:
             self.report({'ERROR'}, "No keyframes found in any marker segment")
@@ -408,8 +415,7 @@ class MARKERNLA_OT_merge(Operator):
             if scene.m2nla_clear_nla:
                 for trk in list(obj.animation_data.nla_tracks):
                     for strip in trk.strips:
-                        if strip.action:
-                            strip.action.use_fake_user = False
+                        release_generated_action(strip.action)
                     obj.animation_data.nla_tracks.remove(trk)
 
             obj.animation_data.action = merged
@@ -542,10 +548,14 @@ class MARKERNLA_OT_delete_marker(Operator):
 # ---- Cleanup -------------------------------------------------------------
 
 class MARKERNLA_OT_cleanup(Operator):
-    """Remove all NLA tracks (and unlink their actions)"""
+    """Remove all NLA tracks from the selected objects"""
     bl_idname  = "markernla.cleanup"
     bl_label   = "Cleanup NLA"
-    bl_description = "Remove every NLA track from the active object"
+    bl_description = (
+        "Remove every NLA track from the selected objects. Actions this "
+        "addon generated are released; hand-authored Actions keep their "
+        "fake user and stay in the blend file"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -562,8 +572,7 @@ class MARKERNLA_OT_cleanup(Operator):
         for obj in objs:
             for trk in list(obj.animation_data.nla_tracks):
                 for strip in trk.strips:
-                    if strip.action:
-                        strip.action.use_fake_user = False
+                    release_generated_action(strip.action)
                 obj.animation_data.nla_tracks.remove(trk)
                 removed += 1
 
