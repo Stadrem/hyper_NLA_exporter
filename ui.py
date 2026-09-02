@@ -4,6 +4,7 @@ from bpy.props import BoolProperty
 from bpy.types import Panel, PropertyGroup
 
 from .clips import get_marker_segments
+from .export_utils import _get_quick_export_targets
 
 #  UI Panel
 # ============================================================
@@ -96,8 +97,7 @@ class MARKERNLA_PT_panel(Panel):
         # ── Target info ───────────────────────────────
         box = layout.box()
         objs = context.selected_objects if scene.m2nla_selected_only else context.scene.objects
-        quick_targets = [o for o in objs
-                         if o.animation_data and o.animation_data.action]
+        quick_targets = _get_quick_export_targets(context)
         valid_objs = [o for o in objs if o.animation_data and (o.animation_data.action or o.animation_data.nla_tracks)]
         box.label(text=f"Targets: {len(valid_objs)} Objects", icon='OBJECT_DATA')
         

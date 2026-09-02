@@ -6,19 +6,32 @@ import os
 import bpy
 from bpy_extras.io_utils import ExportHelper
 
-from .action_utils import _get_fcurves
+from .action_utils import _action_is_empty, _get_fcurves
 from .clips import get_marker_segments
 
 #  Export validation / completion helpers
 # ============================================================
 
 def _get_quick_export_targets(context):
-    """Return objects with an active Action in the current export scope."""
+    """Return objects whose active Action actually holds animation.
+
+    An Action with no F-Curves anywhere is ignored rather than treated as an
+    export target. A slot mistake inside an Action that does hold curves is
+    a different problem and stays a preflight error.
+    """
     scene = context.scene
     objects = (context.selected_objects if scene.m2nla_selected_only
                else scene.objects)
     return [obj for obj in objects
-            if obj.animation_data and obj.animation_data.action]
+            if obj.animation_data and obj.animation_data.action
+            and not _action_is_empty(obj.animation_data.action)]
+
+
+def _empty_action_objects(objects):
+    """Return ``(object, action)`` pairs whose Action carries no F-Curves."""
+    return [(obj, obj.animation_data.action) for obj in objects
+            if obj.animation_data and obj.animation_data.action
+            and _action_is_empty(obj.animation_data.action)]
 
 
 def _with_descendants(objects):
@@ -128,6 +141,15 @@ def collect_export_issues(context, export_format='FBX',
     if scene.m2nla_selected_only and not scoped_objects:
         issues.append(('ERROR', "Selected Only is on, but nothing is selected"))
 
+    ignored = _empty_action_objects(scoped_objects)
+    if ignored:
+        issues.append((
+            'WARNING',
+            "Ignoring Actions with no keyframes: "
+            + ", ".join(f"{obj.name} ('{action.name}')"
+                        for obj, action in ignored[:4]),
+        ))
+
     targets = _get_quick_export_targets(context)
     if not targets:
         issues.append(('ERROR', "No target object has an active Action"))
@@ -153,9 +175,13 @@ def collect_export_issues(context, export_format='FBX',
 
         fcurves = _get_fcurves(action, source_slot)
         if not fcurves:
+            # The Action holds curves, just not in the assigned slot, so the
+            # object would silently export without its animation.
             issues.append((
                 'ERROR',
-                f"{obj.name}: assigned Action slot has no F-Curves",
+                f"{obj.name}: the assigned slot of Action '{action.name}' "
+                "has no F-Curves; assign the slot that holds this "
+                "object's animation",
             ))
             continue
 
