@@ -68,6 +68,26 @@ def _get_fcurves(action, slot=None):
     return list(cb.fcurves) if cb is not None else []
 
 
+def _action_is_empty(action):
+    """True when *action* holds no F-Curves in any slot or channelbag.
+
+    Such an Action contributes nothing to an export. A leftover empty Action
+    on a skinned mesh used to make that mesh count as a second animated
+    object, which tripped the one-object FBX rule for no reason.
+    """
+    if action is None:
+        return True
+    for layer in getattr(action, 'layers', ()):
+        for strip in layer.strips:
+            for channelbag in getattr(strip, 'channelbags', ()):
+                if len(channelbag.fcurves):
+                    return False
+    # Legacy (pre-layered) Actions keep their curves directly on the Action.
+    if len(getattr(action, 'fcurves', ())):
+        return False
+    return True
+
+
 def _ensure_channelbag(action, datablock=None):
     """Ensure *action* has Slot → Layer → Strip → Channelbag and return it."""
     slot = None

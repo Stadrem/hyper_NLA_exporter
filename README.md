@@ -22,7 +22,7 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 * 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose).
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
 * 📐 **Boundary Curve Preservation**: Inserts missing segment boundaries and trims Bezier handles so both poses and curve motion remain faithful across splits.
-* ✅ **Export Safety**: Checks duplicate or blank clip names, clips shorter than 2 frames, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. Existing NLA tracks are temporarily isolated during Quick Export and restored afterward.
+* ✅ **Export Safety**: Checks duplicate or blank clip names, clips shorter than 2 frames, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. An Action with no keyframes is ignored instead of counting as an export target. Existing NLA tracks are temporarily isolated during Quick Export and restored afterward.
 * 📂 **Open Export Folder**: Opens the containing folder automatically after a successful FBX/GLB export.
 * ⚙️ **Advanced Manual NLA Tools**: Easily convert timeline markers to permanent NLA tracks, merge NLA tracks back into a single Action, or run selective cleanups.
 
@@ -120,7 +120,10 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 2. **Clips must be at least 2 frames long**:
    * A marker placed on **First Clip Start**, or two markers on adjacent frames, produces a 1-frame clip. Blender cannot create a zero-length NLA strip and would widen it to 2 frames, so the exported take would no longer match the marker layout.
    * Preflight reports these clips by name and blocks the export; the panel marks the offending row in red. Move the marker at least one frame later, or mute it with the eye icon.
-3. **Blender 5.1 Layered Action Architecture**:
+3. **Empty Actions are ignored, wrong slots are not**:
+   * A skinned mesh that carries a leftover Action with no keyframes is not an export target. Without this, that mesh would count as a second animated object and block FBX Quick Export, even though it contributes nothing.
+   * If an Action *does* hold F-Curves but the object points at a slot that has none, the object would export without its animation. That stays a preflight error naming the object and the Action.
+4. **Blender 5.1 Layered Action Architecture**:
    * Supports Blender 5.x's Slot, Layer, Strip, and Channelbag systems. When multiple objects share one Action, only the F-Curves from each object's assigned Action Slot are split.
 
 ---
