@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License">
 </p>
 
----
+
 
 ## 🌟 주요 기능 (Key Features)
 
@@ -26,7 +26,7 @@
 * 📂 **완료 폴더 열기**: 내보내기에 성공하면 생성된 FBX/GLB가 있는 폴더를 자동으로 엽니다.
 * ⚙️ **수동 NLA 제어 도구**: 마커를 이용해 영구적인 NLA 트랙을 생성하거나, 분할된 NLA들을 다시 하나의 긴 통합 액션으로 합치고, 깔끔하게 정리하는 복구용 도구를 제공합니다.
 
----
+
 
 ## 🛠️ 패널 인터페이스 개요 (Panel Interface Overview)
 
@@ -85,7 +85,7 @@
   * *GLB*: 여러 애니메이션 리그가 포함된 씬도 마커별 클립으로 나누어 단일 `.glb` 파일로 내보냅니다.
 * **Manual NLA Tools (수동 도구 foldout)**: 마커 $\rightarrow$ NLA 영구 변환, NLA $\rightarrow$ Action 통합 액션 복구, 기존 NLA 수동 내보내기 및 트랙 전체 삭제 도구를 담고 있습니다.
 
----
+
 
 ## 🚀 설치 방법
 
@@ -94,7 +94,7 @@
 3. 우측 상단의 `Install...` 버튼을 누르고 다운로드한 `.zip` 파일을 선택합니다.
 4. 검색창에 "Hyper NLA Exporter"를 입력하고 체크박스를 켜서 애드온을 활성화합니다.
 
----
+
 
 ## 📖 사용 방법
 
@@ -108,7 +108,7 @@
 4. 사이드바 N패널에서 **K-Quick Tools** > **Hyper NLA Exporter** 패널을 엽니다.
 5. 필요하면 **Export Path**를 지정합니다. 반복 내보내기라면 `.blend` 파일을 저장한 뒤 **Auto Export**를 켜세요. Quick Export의 **FBX** 또는 **GLB**를 누르면 해당 폴더의 `<blend 파일명>.fbx` 또는 `.glb`를 즉시 덮어씁니다. 파일명과 위치를 직접 정하려면 **Auto Export**를 끄고 일반 파일 브라우저를 사용하세요.
 
----
+
 
 ## ⚠️ 중요 주의 사항 및 기술적 참고 사항 (Technical Notes & Constraints)
 
@@ -128,8 +128,19 @@
    * Quick Export는 임시 분할을 만드는 동안 플레이헤드를 **First Clip Start**로 고정했다가 끝나면 원래 위치로 되돌리므로, 같은 씬은 항상 같은 파일을 만듭니다.
 5. **Blender 5.1 Layered Action 애니메이션 구조**:
    * 블렌더 5.x의 최신 데이터 레이아웃(Action $\rightarrow$ Slot $\rightarrow$ Layer $\rightarrow$ Strip $\rightarrow$ Channelbag)을 지원합니다. 여러 오브젝트가 하나의 Action을 공유하더라도 각 오브젝트에 지정된 Action Slot의 F-Curve만 분할합니다.
+6. **하위 계층도 같은 마커로 분할합니다**:
+   * Quick Export의 검사·분할·내보내기는 동일한 표시 가능한 하위 계층을 대상으로 합니다. 애니메이션이 없는 부모를 선택해도 자식의 애니메이션을 찾습니다. 애니메이션이 있는 자식이 여러 개라면 직접 여러 개를 선택했을 때와 동일하게 FBX 단일 오브젝트 제한이 적용됩니다.
+7. **F-Curve Modifier 보존**:
+   * Cycles·Noise 같은 활성 Modifier와 샘플 곡선은 원본 시간에서 평가하여 1프레임 간격으로 베이크합니다. 이 경우 Create Boundary Keys가 꺼져 있어도 클립 양 끝을 포함합니다. 일반 키프레임 곡선은 베지어 보간을 유지하며, 뮤트된 곡선과 그룹은 제외합니다.
+8. **Shape Key 애니메이션은 GLB를 사용합니다**:
+   * Quick GLB는 Shape Key Action을 오브젝트·본 애니메이션과 같은 마커 클립으로 분할합니다. 표정만 움직이는 메시와 선택한 리그 아래의 메시도 포함합니다.
+   * Morph Target 보존을 위해 Shape Key가 포함된 내보내기에서는 기본 메시를 사용하며, 해당 내보내기의 모든 메시에서 Armature 외의 Modifier를 적용하지 않습니다. 영향을 받는 메시는 사전 검사에서 경고합니다. Shape Key가 없는 내보내기는 기존처럼 Modifier를 적용하며, 스키닝은 계속 지원합니다.
+   * Blender의 NLA Take별 FBX 내보내기는 Shape Key Action을 함께 동기화하지 못하므로 Quick FBX는 활성 Shape Key 애니메이션을 감지하면 안내 후 차단합니다. 뼈대와 표정이 함께 들어가는 클립은 Quick GLB를 사용하세요.
+9. **수동 도구의 원본 데이터 보존**:
+   * Markers → NLA는 요청한 클립을 모두 만든 뒤 기존 트랙을 교체합니다. 빈 클립이나 생성 오류가 있으면 변환을 취소하고 원본 애니메이션을 유지합니다.
+   * 변환·병합·Cleanup은 직접 만든 Action의 연결을 제거하기 전에 Fake User를 지정하므로 저장 후 다시 열어도 남습니다. 애드온이 생성한 Action은 더 이상 사용하지 않을 때 해제합니다.
 
----
+
 
 ## 📁 파일 구조
 
@@ -143,7 +154,7 @@
 * `registration.py`: Blender 클래스와 RNA 속성의 등록 및 해제를 관리합니다.
 * `tests/`: Blender 백그라운드 스모크 테스트와 실제 내보내기 회귀 테스트를 포함합니다.
 
----
+
 
 ## 📄 라이선스 (License)
 

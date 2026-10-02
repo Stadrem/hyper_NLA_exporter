@@ -1,6 +1,7 @@
 """Blender 5.1 Action, Slot, Channelbag, and NLA merge helpers."""
 
 from bisect import bisect_left
+from math import ceil, floor
 
 import bpy
 from bpy_extras import anim_utils
@@ -290,6 +291,42 @@ def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
             handle_left[1],
         )
 
+def _curve_is_enabled(fcurve):
+    """Whether a channel contributes animation, including its group mute."""
+    return not (fcurve.mute or (fcurve.group and fcurve.group.mute))
+
+
+def _needs_evaluated_copy(fcurve):
+    """Modifiers and sampled channels cannot be preserved by copying keys."""
+    return bool(fcurve.sampled_points) or any(
+        not modifier.mute and (
+            not modifier.use_influence or modifier.influence != 0.0)
+        for modifier in fcurve.modifiers
+    )
+
+
+def _bake_segment_curve(source, destination, start, end):
+    """Bake in source time, then retime to zero for a portable export clip.
+
+    A one-frame step matches the export sampling rate. Include both source
+    and clip-relative integer frames, plus original key/sample times, so
+    fractional clip starts and short keyed events remain represented.
+    Modifier curves require evaluated endpoints even when ordinary boundary
+    key creation is disabled: their original keys may be outside the clip.
+    """
+    frames = {float(start), float(end)}
+    frames.update(range(ceil(start), floor(end) + 1))
+    frames.update(start + index for index in range(1, floor(end - start) + 1))
+    frames.update(point.co[0] for point in source.keyframe_points
+                  if start <= point.co[0] <= end)
+    frames.update(point.co[0] for point in source.sampled_points
+                  if start <= point.co[0] <= end)
+    for frame in sorted(frames):
+        point = destination.keyframe_points.insert(
+            frame=frame - start, value=source.evaluate(frame), options={'FAST'})
+        point.interpolation = 'LINEAR'
+
+
 def copy_segment_to_action(source_action, dst_action, start, end,
                            create_boundaries=True, datablock=None,
                            source_slot=None):
@@ -298,10 +335,12 @@ def copy_segment_to_action(source_action, dst_action, start, end,
     Keyframes are re-timed so the clip starts at frame 0.
     *datablock* – if given, a destination slot is created/used for this ID.
     *source_slot* selects the correct Channelbag in a shared Layered Action.
+    Modifier and sampled curves are baked at one-frame intervals; ordinary
+    curves retain their original interpolation and clipped Bezier handles.
     Returns True if any keyframes were added.
     """
     src_fcurves = _get_fcurves(source_action, source_slot)
-    if not src_fcurves:
+    if not src_fcurves or end < start:
         return False
 
     offset = -start
@@ -309,7 +348,11 @@ def copy_segment_to_action(source_action, dst_action, start, end,
     has_any = False
 
     for src_fc in src_fcurves:
-        if not src_fc.keyframe_points:
+        if not _curve_is_enabled(src_fc):
+            continue
+
+        bake_evaluated = _needs_evaluated_copy(src_fc)
+        if not src_fc.keyframe_points and not bake_evaluated:
             continue
 
         group_name = src_fc.group.name if src_fc.group else ""
@@ -327,7 +370,8 @@ def copy_segment_to_action(source_action, dst_action, start, end,
         if abs(end - start) < 0.001:
             need_end_key = False
 
-        if not keys_in_range and not need_start_key and not need_end_key:
+        if (not bake_evaluated and not keys_in_range
+                and not need_start_key and not need_end_key):
             continue
 
         try:
@@ -341,6 +385,14 @@ def copy_segment_to_action(source_action, dst_action, start, end,
                 data_path=src_fc.data_path,
                 index=src_fc.array_index,
             )
+
+        new_fc.extrapolation = src_fc.extrapolation
+        new_fc.auto_smoothing = src_fc.auto_smoothing
+        if bake_evaluated:
+            _bake_segment_curve(src_fc, new_fc, start, end)
+            new_fc.update()
+            has_any = True
+            continue
 
         fc_has = False
         copied_points = []
@@ -520,7 +572,8 @@ def _preserve_static_transforms(dst_action, obj, src_action,
     # Collect channels already present in the source action
     src_channels = set()
     for fc in _get_fcurves(src_action, source_slot):
-        src_channels.add((fc.data_path, fc.array_index))
+        if _curve_is_enabled(fc):
+            src_channels.add((fc.data_path, fc.array_index))
 
     # Collect channels already present in the destination action
     dst_cb = _get_channelbag(dst_action)
