@@ -128,6 +128,17 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
    * Quick Export pins the playhead to **First Clip Start** while it builds the temporary split and restores it afterwards, so the same scene always produces the same file.
 5. **Blender 5.1 Layered Action Architecture**:
    * Supports Blender 5.x's Slot, Layer, Strip, and Channelbag systems. When multiple objects share one Action, only the F-Curves from each object's assigned Action Slot are split.
+6. **Hierarchy-wide marker splitting**:
+   * Quick Export validates and splits the same visible descendant hierarchy that it exports. Selecting an unanimated parent also finds its animated children. Multiple animated descendants trigger the same FBX single-object restriction as multiple directly selected objects.
+7. **F-Curve modifiers**:
+   * Active modifiers such as Cycles and Noise, and sampled curves, are evaluated in source time and baked at one-frame intervals. Their clip endpoints are included even with Create Boundary Keys off. Ordinary keyframed curves retain their Bezier interpolation; muted curves and groups are excluded.
+8. **Shape Key animation uses GLB**:
+   * Quick GLB splits Shape Key Actions into the same marker clips as object and bone animation, including shape-only meshes and meshes beneath the selection.
+   * To retain morph targets, exports containing Shape Keys use base meshes: non-armature mesh modifiers are not applied anywhere in that export. Preflight warns about affected meshes. Exports without Shape Keys keep applying modifiers as before; skinning remains supported.
+   * Quick FBX blocks animated Shape Keys with an explanation because Blender's per-NLA-take exporter does not synchronize their Actions. Use Quick GLB for combined skeletal and facial clips.
+9. **Manual tool data preservation**:
+   * Markers → NLA builds every requested clip before replacing existing tracks. Empty or failed clips cancel the conversion and preserve the original animation.
+   * Convert, merge, and cleanup protect hand-authored Actions with a Fake User before removing their references, so they survive saving and reopening. Generated Actions are released when no longer needed.
 
 ---
 

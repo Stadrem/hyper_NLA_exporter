@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import bpy
 
 from .action_utils import (
+    _action_is_empty,
     _get_channelbag,
     _get_fcurves,
     _preserve_static_transforms,
@@ -15,6 +16,26 @@ from .clips import get_marker_segments
 
 #  Temporary NLA split for export
 # ============================================================
+
+
+def _iter_animation_datablocks(objects, include_shape_keys=True):
+    """Yield unique animation owners, including mesh Shape Key datablocks.
+
+    The caller supplies the export's complete object scope. Shared mesh data
+    can appear on several objects, but its Key animation must be split once.
+    """
+    seen = set()
+    for obj in objects:
+        candidates = [obj]
+        if include_shape_keys and getattr(obj, 'type', None) == 'MESH':
+            shape_keys = getattr(obj.data, 'shape_keys', None)
+            if shape_keys is not None:
+                candidates.append(shape_keys)
+        for datablock in candidates:
+            pointer = datablock.as_pointer()
+            if pointer not in seen:
+                seen.add(pointer)
+                yield datablock
 
 def _fit_strip_to_segment(strip, segment):
     """Pin *strip* to the full segment length.
@@ -46,64 +67,73 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
     action.use_fake_user = True
     mark_generated_action(action)
 
-    did_copy = copy_segment_to_action(
-        source_action,
-        action,
-        segment['start'],
-        segment['end'],
-        create_boundaries=create_boundaries,
-        datablock=obj,
-        source_slot=source_slot,
-    )
-    _preserve_static_transforms(
-        action,
-        obj,
-        source_action,
-        source_slot=source_slot,
-    )
+    track = None
+    try:
+        did_copy = copy_segment_to_action(
+            source_action,
+            action,
+            segment['start'],
+            segment['end'],
+            create_boundaries=create_boundaries,
+            datablock=obj,
+            source_slot=source_slot,
+        )
+        if obj.id_type == 'OBJECT':
+            _preserve_static_transforms(
+                action,
+                obj,
+                source_action,
+                source_slot=source_slot,
+            )
 
-    if not did_copy and not _get_fcurves(action):
+        if not did_copy and not _get_fcurves(action):
+            action.use_fake_user = False
+            bpy.data.actions.remove(action)
+            return None
+
+        channelbag = _get_channelbag(action)
+        slot = getattr(channelbag, 'slot', None)
+        track = obj.animation_data.nla_tracks.new()
+        track.name = segment['name']
+        strip = track.strips.new(
+            name=segment['name'],
+            start=track_start,
+            action=action,
+        )
+        strip.name = segment['name']
+        if slot and hasattr(strip, 'action_slot'):
+            strip.action_slot = slot
+        _fit_strip_to_segment(strip, segment)
+
+        key_count = sum(
+            len(fcurve.keyframe_points)
+            for fcurve in _get_fcurves(action, slot)
+        )
+        return {
+            'action': action,
+            'track': track,
+            'strip': strip,
+            'slot': slot,
+            'key_count': key_count,
+        }
+    except Exception:
+        if track is not None:
+            obj.animation_data.nla_tracks.remove(track)
         action.use_fake_user = False
-        bpy.data.actions.remove(action)
-        return None
-
-    channelbag = _get_channelbag(action)
-    slot = getattr(channelbag, 'slot', None)
-    track = obj.animation_data.nla_tracks.new()
-    track.name = segment['name']
-    strip = track.strips.new(
-        name=segment['name'],
-        start=track_start,
-        action=action,
-    )
-    strip.name = segment['name']
-    if slot and hasattr(strip, 'action_slot'):
-        strip.action_slot = slot
-    _fit_strip_to_segment(strip, segment)
-
-    key_count = sum(
-        len(fcurve.keyframe_points)
-        for fcurve in _get_fcurves(action, slot)
-    )
-    return {
-        'action': action,
-        'track': track,
-        'strip': strip,
-        'slot': slot,
-        'key_count': key_count,
-    }
+        bpy.data.actions.remove(action, do_unlink=True)
+        raise
 
 
 @contextmanager
-def _temporary_nla_split(objects, scene):
-    """Temporarily split actions into NLA strips by markers for multiple objects.
-    Each object gets its own separate Action to avoid slot-sharing conflicts.
+def _temporary_nla_split(objects, scene, include_shape_keys=True):
+    """Temporarily split object and Shape Key actions into matching clips.
+    Each animation owner gets a separate Action to avoid slot conflicts.
     """
     object_states = []
     
-    for obj in objects:
+    for obj in _iter_animation_datablocks(objects, include_shape_keys):
         anim = obj.animation_data
-        if not anim or not anim.action:
+        if not anim or _action_is_empty(anim.action):
             continue
         object_states.append({
             'obj': obj,
@@ -241,13 +271,9 @@ def _temporary_nla_split(objects, scene):
         split_result['clip_names'] = sorted(clip_names)
         yield split_result
     finally:
-        # Restore scene frame range and playhead
+        # Restore all animation owners before evaluating the original frame.
         scene.frame_start = orig_frame_start
         scene.frame_end = orig_frame_end
-        try:
-            scene.frame_set(orig_frame_current)
-        except (ReferenceError, RuntimeError):
-            pass
 
         for state in object_states:
             anim = state['anim']
@@ -283,6 +309,11 @@ def _temporary_nla_split(objects, scene):
                     anim.action_slot = state['original_slot']
                 except Exception:
                     pass
+
+        try:
+            scene.frame_set(orig_frame_current)
+        except (ReferenceError, RuntimeError):
+            pass
 
 
 # ============================================================

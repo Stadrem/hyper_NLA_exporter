@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper
 
 from .action_utils import _action_is_empty, _get_fcurves
 from .clips import get_marker_segments
+from .nla_split import _iter_animation_datablocks
 
 #  Export validation / completion helpers
 # ============================================================
@@ -19,10 +20,8 @@ def _get_quick_export_targets(context):
     export target. A slot mistake inside an Action that does hold curves is
     a different problem and stays a preflight error.
     """
-    scene = context.scene
-    objects = (context.selected_objects if scene.m2nla_selected_only
-               else scene.objects)
-    return [obj for obj in objects
+    return [obj for obj in _iter_animation_datablocks(
+                _get_export_scope(context))
             if obj.animation_data and obj.animation_data.action
             and not _action_is_empty(obj.animation_data.action)]
 
@@ -47,6 +46,22 @@ def _with_descendants(objects):
     return result
 
 
+def _get_export_scope(context):
+    """Use the same visible hierarchy for validation, splitting, and export."""
+    if not context.scene.m2nla_selected_only:
+        return list(context.scene.objects)
+    selected = set(context.selected_objects)
+    included = _with_descendants(selected)
+    return [obj for obj in context.view_layer.objects
+            if obj in included and (obj in selected or obj.visible_get())]
+
+
+def _has_shape_keys(objects):
+    return any(obj.type == 'MESH' and obj.data.shape_keys
+               and len(obj.data.shape_keys.key_blocks) > 1
+               for obj in objects)
+
+
 @contextmanager
 def _temporary_descendant_selection(context):
     """Temporarily add the selection's children for a use_selection export.
@@ -66,7 +81,7 @@ def _temporary_descendant_selection(context):
     original = set(context.selected_objects)
     added = []
     try:
-        for obj in _with_descendants(original):
+        for obj in _get_export_scope(context):
             if obj in original:
                 continue
             try:
@@ -136,12 +151,24 @@ def collect_export_issues(context, export_format='FBX',
                 "Duplicate clip names: " + ", ".join(duplicates[:4]),
             ))
 
-    scoped_objects = list(context.selected_objects
-                          if scene.m2nla_selected_only else scene.objects)
+    scoped_objects = _get_export_scope(context)
     if scene.m2nla_selected_only and not scoped_objects:
         issues.append(('ERROR', "Selected Only is on, but nothing is selected"))
 
-    ignored = _empty_action_objects(scoped_objects)
+    if export_format == 'GLB' and _has_shape_keys(scoped_objects):
+        modified_meshes = [obj.name for obj in scoped_objects
+                           if obj.type == 'MESH' and any(
+                               mod.type != 'ARMATURE' and mod.show_viewport
+                               for mod in obj.modifiers)]
+        if modified_meshes:
+            issues.append((
+                'WARNING',
+                "GLB preserves Shape Keys using base meshes; non-armature "
+                "modifiers will not be applied: "
+                + ", ".join(modified_meshes[:4]),
+            ))
+
+    ignored = _empty_action_objects(_iter_animation_datablocks(scoped_objects))
     if ignored:
         issues.append((
             'WARNING',
@@ -151,10 +178,20 @@ def collect_export_issues(context, export_format='FBX',
         ))
 
     targets = _get_quick_export_targets(context)
+    shape_targets = [target for target in targets
+                     if target.id_type == 'KEY']
+    object_targets = [target for target in targets
+                      if target.id_type == 'OBJECT']
+    if export_format == 'FBX' and shape_targets:
+        issues.append((
+            'ERROR',
+            "FBX marker export cannot synchronize Shape Key Actions; "
+            "use GLB for combined bone/object and Shape Key clips",
+        ))
     if not targets:
         issues.append(('ERROR', "No target object has an active Action"))
     elif (export_format == 'FBX'
-          and len(targets) > 1
+          and len(object_targets) > 1
           and not allow_multiple_fbx_targets):
         issues.append((
             'ERROR',
@@ -198,9 +235,9 @@ def collect_export_issues(context, export_format='FBX',
                 ))
 
     if scene.m2nla_selected_only and targets:
-        included = _with_descendants(scoped_objects)
+        included = set(scoped_objects)
         target_armatures = {obj for obj in targets
-                            if obj.type == 'ARMATURE'}
+                            if getattr(obj, 'type', None) == 'ARMATURE'}
         for obj in scene.objects:
             if obj.type != 'MESH' or obj in included:
                 continue
@@ -293,7 +330,9 @@ def _run_glb_export(operator, scene, marker_actions=False):
             'export_animation_mode': 'ACTIONS',
             'export_merge_animation': 'NLA_TRACK',
             'export_anim_single_armature': False,
-            'export_apply': True,
+            # This is a global exporter option: preserve original meshes
+            # when morphs exist, keep evaluated geometry for other exports.
+            'export_apply': not _has_shape_keys(_get_export_scope(bpy.context)),
             'export_rest_position_armature': False,
         })
     else:

@@ -96,10 +96,8 @@ class MARKERNLA_PT_panel(Panel):
 
         # ── Target info ───────────────────────────────
         box = layout.box()
-        objs = context.selected_objects if scene.m2nla_selected_only else context.scene.objects
         quick_targets = _get_quick_export_targets(context)
-        valid_objs = [o for o in objs if o.animation_data and (o.animation_data.action or o.animation_data.nla_tracks)]
-        box.label(text=f"Targets: {len(valid_objs)} Objects", icon='OBJECT_DATA')
+        box.label(text=f"Quick Export: {len(quick_targets)} Actions", icon='OBJECT_DATA')
         
         if obj and obj.animation_data:
             if obj.animation_data.action:
@@ -143,10 +141,13 @@ class MARKERNLA_PT_panel(Panel):
 
         format_note = box.row()
         has_multiple_targets = len(quick_targets) > 1
-        format_note.alert = has_multiple_targets
+        has_shape_animation = any(target.id_type == 'KEY'
+                                  for target in quick_targets)
+        format_note.alert = has_multiple_targets or has_shape_animation
         format_note.label(
-            text="FBX: One rig only · GLB: Multi-rig",
-            icon='ERROR' if has_multiple_targets else 'INFO',
+            text=("Shape Key animation: use GLB" if has_shape_animation
+                  else "FBX: One rig only · GLB: Multi-rig"),
+            icon='ERROR' if format_note.alert else 'INFO',
         )
 
         layout.separator()

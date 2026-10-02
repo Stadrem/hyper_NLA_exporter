@@ -20,7 +20,11 @@ parts/
 sdist/
 var/
 wheels/
-tests/
+tests/*
+!tests/*.py
+!tests/*.ps1
+!tests/*.bat
+.test_output/
 Work_Log/
 share/python-wheels/
 *.egg-info/

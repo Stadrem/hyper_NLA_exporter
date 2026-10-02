@@ -5,7 +5,11 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
-from .action_utils import merge_nla_to_action, release_generated_action
+from .action_utils import (
+    is_generated_action,
+    merge_nla_to_action,
+    release_generated_action,
+)
 from .clips import get_marker_segments
 from .export_utils import (
     _get_quick_export_targets,
@@ -301,6 +305,22 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
 #  Operators  – Manual NLA tools (advanced)
 # ============================================================
 
+def _preserve_or_release_action(action):
+    """Keep authored animation when its last active/NLA user is removed."""
+    if action is None:
+        return
+    if is_generated_action(action):
+        release_generated_action(action)
+    else:
+        action.use_fake_user = True
+
+
+def _remove_manual_nla_track(anim, track):
+    for strip in track.strips:
+        _preserve_or_release_action(strip.action)
+    anim.nla_tracks.remove(track)
+
+
 class MARKERNLA_OT_convert(Operator):
     """Convert timeline markers into separate NLA action strips"""
     bl_idname  = "markernla.convert"
@@ -328,29 +348,57 @@ class MARKERNLA_OT_convert(Operator):
             self.report({'ERROR'}, "No valid marker segments found")
             return {'CANCELLED'}
 
+        # Stage the complete result alongside the existing tracks. Nothing
+        # authored is detached until every object/segment has valid content.
+        states = [{
+            'obj': obj,
+            'anim': obj.animation_data,
+            'source': obj.animation_data.action,
+            'slot': getattr(obj.animation_data, 'action_slot', None),
+            'tracks': list(obj.animation_data.nla_tracks),
+            'active_track': obj.animation_data.nla_tracks.active,
+        } for obj in objs]
+        original_actions = {action.as_pointer() for action in bpy.data.actions}
         total_created = 0
-        
-        for obj in objs:
-            if scene.m2nla_clear_nla and obj.animation_data.nla_tracks:
-                for trk in list(obj.animation_data.nla_tracks):
-                    obj.animation_data.nla_tracks.remove(trk)
-
-        for seg in segments:
-            for obj in objs:
-                source = obj.animation_data.action
-                if not source:
-                    continue
-
-                built = _build_nla_track_for_segment(
-                    obj,
-                    source,
-                    getattr(obj.animation_data, 'action_slot', None),
-                    seg,
-                    track_start=seg['start'],
-                    create_boundaries=scene.m2nla_boundary_keys,
-                )
-                if built is not None:
+        try:
+            for seg in segments:
+                for state in states:
+                    built = _build_nla_track_for_segment(
+                        state['obj'],
+                        state['source'],
+                        state['slot'],
+                        seg,
+                        track_start=seg['start'],
+                        create_boundaries=scene.m2nla_boundary_keys,
+                    )
+                    if built is None or not built['key_count']:
+                        raise ValueError(
+                            f"No keyframes for {state['obj'].name} / "
+                            f"{seg['name']}. Enable Create Boundary Keys "
+                            "or adjust the marker range")
                     total_created += 1
+        except Exception as exc:
+            # Also catch partial construction: the builder may have created
+            # an Action or track before raising, without returning a result.
+            for state in states:
+                anim = state['anim']
+                original_tracks = {track.as_pointer()
+                                   for track in state['tracks']}
+                for track in list(anim.nla_tracks):
+                    if track.as_pointer() not in original_tracks:
+                        anim.nla_tracks.remove(track)
+                anim.nla_tracks.active = state['active_track']
+            for action in list(bpy.data.actions):
+                if (action.as_pointer() not in original_actions
+                        and is_generated_action(action)):
+                    bpy.data.actions.remove(action)
+            self.report({'ERROR'}, f"Conversion cancelled; original animation kept: {exc}")
+            return {'CANCELLED'}
+
+        if scene.m2nla_clear_nla:
+            for state in states:
+                for track in state['tracks']:
+                    _remove_manual_nla_track(state['anim'], track)
 
         if scene.m2nla_unlink_source:
             for obj in objs:
@@ -362,10 +410,6 @@ class MARKERNLA_OT_convert(Operator):
                     # by the Unlink Source Action description.
                     source.use_fake_user = True
                 anim.action = None
-
-        if total_created == 0:
-            self.report({'ERROR'}, "No keyframes found in any marker segment")
-            return {'CANCELLED'}
 
         self.report({'INFO'}, f"Created {total_created} NLA strips across {len(objs)} objects")
         return {'FINISHED'}
@@ -402,10 +446,9 @@ class MARKERNLA_OT_merge(Operator):
 
             if scene.m2nla_clear_nla:
                 for trk in list(obj.animation_data.nla_tracks):
-                    for strip in trk.strips:
-                        release_generated_action(strip.action)
-                    obj.animation_data.nla_tracks.remove(trk)
+                    _remove_manual_nla_track(obj.animation_data, trk)
 
+            _preserve_or_release_action(obj.animation_data.action)
             obj.animation_data.action = merged
             if merged.slots:
                 obj.animation_data.action_slot = merged.slots[0]
@@ -541,8 +584,8 @@ class MARKERNLA_OT_cleanup(Operator):
     bl_label   = "Cleanup NLA"
     bl_description = (
         "Remove every NLA track from the selected objects. Actions this "
-        "addon generated are released; hand-authored Actions keep their "
-        "fake user and stay in the blend file"
+        "addon generated are released; hand-authored Actions are preserved "
+        "with a fake user and stay in the blend file"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -559,9 +602,7 @@ class MARKERNLA_OT_cleanup(Operator):
         removed = 0
         for obj in objs:
             for trk in list(obj.animation_data.nla_tracks):
-                for strip in trk.strips:
-                    release_generated_action(strip.action)
-                obj.animation_data.nla_tracks.remove(trk)
+                _remove_manual_nla_track(obj.animation_data, trk)
                 removed += 1
 
         self.report({'INFO'}, f"Removed {removed} NLA track(s)")
