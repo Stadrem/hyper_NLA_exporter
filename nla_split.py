@@ -55,6 +55,20 @@ def _fit_strip_to_segment(strip, segment):
         pass
 
 
+def _fit_action_to_segment(action, segment):
+    """Declare the full segment as the split Action's manual frame range.
+
+    The glTF exporter's ACTIONS mode samples each Action over its own frame
+    range, not over the strip. Without boundary keys the keyed range starts
+    at the first real key, so a GLB clip came out shorter than its marker
+    segment and shifted to that key. A manual range pins every exporter and
+    ``strips.new`` to the complete clip.
+    """
+    action.use_frame_range = True
+    action.frame_start = 0.0
+    action.frame_end = float(max(int(segment['length']), 1) - 1)
+
+
 def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
                                  track_start, create_boundaries):
     """Create one split Action and its matching NLA Track/Strip.
@@ -91,6 +105,7 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
             bpy.data.actions.remove(action)
             return None
 
+        _fit_action_to_segment(action, segment)
         channelbag = _get_channelbag(action)
         slot = getattr(channelbag, 'slot', None)
         track = obj.animation_data.nla_tracks.new()
@@ -104,6 +119,11 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
         if slot and hasattr(strip, 'action_slot'):
             strip.action_slot = slot
         _fit_strip_to_segment(strip, segment)
+        # The default HOLD extends a strip's first pose back to frame 0, so
+        # after Markers → NLA every higher track covered the clips below it.
+        # Exporters solo one strip and sample only its range, so Quick
+        # Export output does not change.
+        strip.extrapolation = 'NOTHING'
 
         key_count = sum(
             len(fcurve.keyframe_points)
@@ -128,39 +148,53 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
 def _temporary_nla_split(objects, scene, include_shape_keys=True):
     """Temporarily split object and Shape Key actions into matching clips.
     Each animation owner gets a separate Action to avoid slot conflicts.
+
+    *objects* is the export scope. Owners with a non-empty active Action are
+    split; every owner in scope has its existing NLA muted, including
+    objects and Shape Keys that carry NLA tracks but no active Action, so
+    no stale track can leak into the exported takes.
     """
+    segments = [seg for seg in get_marker_segments(scene)
+                if not getattr(seg['marker'], "m2nla_muted", False)]
+    clip_name_set = {seg['name'] for seg in segments}
+
     object_states = []
-    
+    nla_states = []
     for obj in _iter_animation_datablocks(objects, include_shape_keys):
         anim = obj.animation_data
-        if not anim or _action_is_empty(anim.action):
+        if not anim:
+            continue
+        if anim.nla_tracks:
+            nla_states.append({
+                'anim': anim,
+                'track_states': [
+                    {
+                        'track': track,
+                        'mute': track.mute,
+                        'is_solo': getattr(track, 'is_solo', False),
+                        'strip_states': [
+                            {
+                                'strip': strip,
+                                'name': strip.name,
+                                'mute': strip.mute,
+                            }
+                            for strip in track.strips
+                        ],
+                    }
+                    for track in anim.nla_tracks
+                ],
+            })
+        if _action_is_empty(anim.action):
             continue
         object_states.append({
             'obj': obj,
             'anim': anim,
             'original_action': anim.action,
             'original_slot': getattr(anim, 'action_slot', None),
-            'existing_track_states': [
-                {
-                    'track': track,
-                    'mute': track.mute,
-                    'is_solo': getattr(track, 'is_solo', False),
-                    'strip_states': [
-                        {
-                            'strip': strip,
-                            'mute': strip.mute,
-                        }
-                        for strip in track.strips
-                    ],
-                }
-                for track in anim.nla_tracks
-            ],
             'temp_tracks': [],
             'temp_actions': [],
         })
 
-    segments = [seg for seg in get_marker_segments(scene)
-                if not getattr(seg['marker'], "m2nla_muted", False)]
     clip_names = set()
     boundary_keys = scene.m2nla_boundary_keys
     split_result = {
@@ -178,24 +212,39 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
     
     # Calculate max segment length to cover all animations
     max_len = max((seg['length'] for seg in segments), default=1)
+    first_clip_start = int(getattr(scene, 'm2nla_start_frame', 1))
 
     try:
-        for state in object_states:
-            obj = state['obj']
-            anim = state['anim']
-            original_action = state['original_action']
-            original_slot = state['original_slot']
+        # Static pose values that _preserve_static_transforms injects come
+        # from the last evaluation. Evaluate at First Clip Start before and
+        # after muting, so channels driven by the old NLA or by drivers no
+        # longer depend on where the playhead happened to sit.
+        scene.frame_set(first_clip_start)
 
-            # Existing user NLA must not leak into a marker Quick Export.
-            # Preserve both controls because a solo track can suppress the
-            # temporary tracks even when that existing track is muted.
-            for track_state in state['existing_track_states']:
+        # Existing user NLA must not leak into a marker Quick Export.
+        # Preserve both controls because a solo track can suppress the
+        # temporary tracks even when that existing track is muted.
+        for nla_state in nla_states:
+            for track_state in nla_state['track_states']:
                 track = track_state['track']
                 track.mute = True
                 if hasattr(track, 'is_solo'):
                     track.is_solo = False
                 for strip_state in track_state['strip_states']:
-                    strip_state['strip'].mute = True
+                    strip = strip_state['strip']
+                    strip.mute = True
+                    # Strip names are unique per owner, so an existing strip
+                    # named like a clip would turn the temporary strip into
+                    # "Walk.001". Park it under a free name until restore.
+                    if strip.name in clip_name_set:
+                        strip.name = "m2nla_parked"
+
+        scene.frame_set(first_clip_start)
+
+        for state in object_states:
+            obj = state['obj']
+            original_action = state['original_action']
+            original_slot = state['original_slot']
 
             object_result = {
                 'name': obj.name,
@@ -266,7 +315,7 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
         # another clip's pose. Pin the playhead to the first clip's start so
         # the same scene always produces the same file. frame_set also
         # re-evaluates the depsgraph, making the temporary tracks visible.
-        scene.frame_set(int(getattr(scene, 'm2nla_start_frame', 1)))
+        scene.frame_set(first_clip_start)
 
         split_result['clip_names'] = sorted(clip_names)
         yield split_result
@@ -292,22 +341,27 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
                 except (ReferenceError, RuntimeError):
                     pass
 
-            for track_state in state['existing_track_states']:
+            anim.action = state['original_action']
+            if state['original_slot'] is not None:
+                try:
+                    anim.action_slot = state['original_slot']
+                except Exception:
+                    pass
+
+        # The temporary strips are gone, so parked names are free again.
+        for nla_state in nla_states:
+            for track_state in nla_state['track_states']:
                 try:
                     track = track_state['track']
                     track.mute = track_state['mute']
                     if hasattr(track, 'is_solo'):
                         track.is_solo = track_state['is_solo']
                     for strip_state in track_state['strip_states']:
-                        strip_state['strip'].mute = strip_state['mute']
+                        strip = strip_state['strip']
+                        strip.mute = strip_state['mute']
+                        if strip.name != strip_state['name']:
+                            strip.name = strip_state['name']
                 except (ReferenceError, RuntimeError):
-                    pass
-
-            anim.action = state['original_action']
-            if state['original_slot'] is not None:
-                try:
-                    anim.action_slot = state['original_slot']
-                except Exception:
                     pass
 
         try:

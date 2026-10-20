@@ -3,7 +3,7 @@
 from bpy.props import BoolProperty
 from bpy.types import Panel, PropertyGroup
 
-from .clips import get_marker_segments
+from .clips import get_marker_segments, get_shared_frame_markers
 from .export_utils import _get_quick_export_targets
 
 #  UI Panel
@@ -85,6 +85,15 @@ class MARKERNLA_PT_panel(Panel):
                 box.label(text="⚠️ Duplicate unmuted marker names!", icon='ERROR')
             if has_short_clips:
                 box.label(text="⚠️ Clips need at least 2 frames!", icon='ERROR')
+            # A second marker on the same frame has no row above: its clip
+            # would be dropped, so name it here.
+            for frame, names in get_shared_frame_markers(scene):
+                row = box.row()
+                row.alert = True
+                row.label(
+                    text=f"⚠️ Frame {frame} has {len(names)} markers: "
+                         + ", ".join(names),
+                    icon='ERROR')
 
             row = box.row(align=True)
             row.operator("markernla.reset_frame_range", icon='LOOP_BACK')

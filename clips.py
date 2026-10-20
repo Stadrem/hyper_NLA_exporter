@@ -34,4 +34,24 @@ def get_marker_segments(scene):
     return segments
 
 
+def get_shared_frame_markers(scene):
+    """Return ``(frame, [names])`` for clip markers that share a frame.
+
+    Only one marker per frame can end a segment, so get_marker_segments
+    drops the others and their clips would vanish from the export without
+    a word. Frames where every marker is muted cannot lose a clip.
+    """
+    first_clip_start = int(getattr(scene, "m2nla_start_frame", 1))
+    by_frame = {}
+    for marker in scene.timeline_markers:
+        if marker.frame >= first_clip_start:
+            by_frame.setdefault(marker.frame, []).append(marker)
+    return [
+        (frame, [marker.name or "<unnamed>" for marker in markers])
+        for frame, markers in sorted(by_frame.items())
+        if len(markers) > 1 and not all(
+            getattr(marker, "m2nla_muted", False) for marker in markers)
+    ]
+
+
 # ============================================================

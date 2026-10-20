@@ -10,8 +10,9 @@ from .action_utils import (
     merge_nla_to_action,
     release_generated_action,
 )
-from .clips import get_marker_segments
+from .clips import get_marker_segments, get_shared_frame_markers
 from .export_utils import (
+    _get_export_scope,
     _get_quick_export_targets,
     _finish_export,
     _invoke_export_browser,
@@ -57,9 +58,9 @@ class MARKERNLA_OT_validate_export(Operator):
                          if severity == 'ERROR']
 
         if not static_errors:
-            targets = _get_quick_export_targets(context)
             try:
-                with _temporary_nla_split(targets, context.scene) as result:
+                with _temporary_nla_split(_get_export_scope(context),
+                                          context.scene) as result:
                     split_result = result
                     issues.extend(collect_split_issues(split_result))
             except Exception as exc:
@@ -207,7 +208,8 @@ class MARKERNLA_OT_quick_export_fbx(Operator, ExportHelper):
                 "incomplete animation takes"
             ))
 
-        with _temporary_nla_split(anim_objs, scene) as split_result:
+        with _temporary_nla_split(_get_export_scope(context),
+                                  scene) as split_result:
             clip_names = split_result['clip_names']
             if not clip_names:
                 self.report({'ERROR'}, "No keyframes found in marker segments")
@@ -259,7 +261,8 @@ class MARKERNLA_OT_quick_export_glb(Operator, ExportHelper):
             self.report({'ERROR'}, "No valid objects with animation data found")
             return {'CANCELLED'}
 
-        with _temporary_nla_split(anim_objs, scene) as split_result:
+        with _temporary_nla_split(_get_export_scope(context),
+                                  scene) as split_result:
             clip_names = split_result['clip_names']
             if not clip_names:
                 self.report({'ERROR'}, "No keyframes found in marker segments")
@@ -347,6 +350,13 @@ class MARKERNLA_OT_convert(Operator):
         if not segments:
             self.report({'ERROR'}, "No valid marker segments found")
             return {'CANCELLED'}
+        shared_frames = get_shared_frame_markers(scene)
+        if shared_frames:
+            frame, names = shared_frames[0]
+            self.report({'ERROR'}, (
+                f"Markers share frame {frame} ({', '.join(names)}); "
+                "move one so every clip has its own end frame"))
+            return {'CANCELLED'}
 
         # Stage the complete result alongside the existing tracks. Nothing
         # authored is detached until every object/segment has valid content.
@@ -360,6 +370,7 @@ class MARKERNLA_OT_convert(Operator):
         } for obj in objs]
         original_actions = {action.as_pointer() for action in bpy.data.actions}
         total_created = 0
+        built_strips = []
         try:
             for seg in segments:
                 for state in states:
@@ -376,6 +387,7 @@ class MARKERNLA_OT_convert(Operator):
                             f"No keyframes for {state['obj'].name} / "
                             f"{seg['name']}. Enable Create Boundary Keys "
                             "or adjust the marker range")
+                    built_strips.append((built['strip'], seg['name']))
                     total_created += 1
         except Exception as exc:
             # Also catch partial construction: the builder may have created
@@ -400,6 +412,16 @@ class MARKERNLA_OT_convert(Operator):
                 for track in state['tracks']:
                     _remove_manual_nla_track(state['anim'], track)
 
+        # Strip names are unique per owner: a kept or just-removed strip
+        # named like a clip forced the new one to "Walk.001". Claim the
+        # clip names again now that the cleared strips are gone.
+        renamed = []
+        for strip, clip_name in built_strips:
+            if strip.name != clip_name:
+                strip.name = clip_name
+            if strip.name != clip_name:
+                renamed.append(strip.name)
+
         if scene.m2nla_unlink_source:
             for obj in objs:
                 anim = obj.animation_data
@@ -410,6 +432,14 @@ class MARKERNLA_OT_convert(Operator):
                     # by the Unlink Source Action description.
                     source.use_fake_user = True
                 anim.action = None
+
+        if renamed:
+            self.report({'WARNING'}, (
+                f"Created {total_created} NLA strips; kept NLA strips "
+                "already use those clip names, so new strips are named: "
+                + ", ".join(renamed[:4])
+            ))
+            return {'FINISHED'}
 
         self.report({'INFO'}, f"Created {total_created} NLA strips across {len(objs)} objects")
         return {'FINISHED'}

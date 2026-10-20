@@ -2,12 +2,14 @@
 
 from contextlib import contextmanager
 import os
+import shutil
+import tempfile
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
 
 from .action_utils import _action_is_empty, _get_fcurves
-from .clips import get_marker_segments
+from .clips import get_marker_segments, get_shared_frame_markers
 from .nla_split import _iter_animation_datablocks
 
 #  Export validation / completion helpers
@@ -118,6 +120,15 @@ def collect_export_issues(context, export_format='FBX',
             'ERROR',
             "Markers before First Clip Start "
             f"({first_clip_start}) are not exportable: {names}",
+        ))
+
+    shared_frames = get_shared_frame_markers(scene)
+    if shared_frames:
+        issues.append((
+            'ERROR',
+            "Markers share a frame; only one clip can end there: "
+            + "; ".join(f"{frame}: {', '.join(names)}"
+                        for frame, names in shared_frames[:3]),
         ))
 
     if not segments:
@@ -297,11 +308,55 @@ def _open_export_folder(scene, filepath, operator):
         operator.report({'WARNING'}, f"Could not open export folder: {exc}")
 
 
+def _run_staged_export(operator, label, export):
+    """Run ``export(path)`` into a staging folder, then replace the target.
+
+    The exporter writes to a private folder beside ``operator.filepath``
+    under the same file name, so the result is only accepted when the
+    operator reports FINISHED and actually wrote a non-empty file. Only then
+    does ``os.replace`` swap it in, so a cancelled, failed, or interrupted
+    export (Auto Export in particular) can never leave a missing, truncated,
+    or half-written file where the last good export used to be.
+    """
+    final_path = operator.filepath
+    try:
+        staging = tempfile.mkdtemp(prefix=".hyper_nla_export_",
+                                   dir=os.path.dirname(final_path))
+    except OSError as exc:
+        operator.report({'ERROR'}, f"{label} export failed: {exc}")
+        return False
+
+    staged_path = os.path.join(staging, os.path.basename(final_path))
+    try:
+        result = export(staged_path)
+        if 'FINISHED' not in result:
+            operator.report(
+                {'ERROR'},
+                f"{label} export failed: exporter returned "
+                f"{', '.join(sorted(result)) or 'nothing'}",
+            )
+            return False
+        if (not os.path.isfile(staged_path)
+                or os.path.getsize(staged_path) == 0):
+            operator.report(
+                {'ERROR'},
+                f"{label} export failed: the exporter wrote no data",
+            )
+            return False
+        os.replace(staged_path, final_path)
+    except Exception as exc:
+        operator.report({'ERROR'}, f"{label} export failed: {exc}")
+        return False
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return True
+
+
 def _run_fbx_export(operator, scene):
     """Run the shared FBX exporter configuration and report failures."""
-    try:
-        bpy.ops.export_scene.fbx(
-            filepath=operator.filepath,
+    def export(filepath):
+        return bpy.ops.export_scene.fbx(
+            filepath=filepath,
             use_selection=scene.m2nla_selected_only,
             use_armature_deform_only=scene.m2nla_only_deform_bones,
             bake_anim=True,
@@ -311,16 +366,13 @@ def _run_fbx_export(operator, scene):
             add_leaf_bones=False,
             path_mode='AUTO',
         )
-    except Exception as exc:
-        operator.report({'ERROR'}, f"FBX export failed: {exc}")
-        return False
-    return True
+
+    return _run_staged_export(operator, "FBX", export)
 
 
 def _run_glb_export(operator, scene, marker_actions=False):
     """Run GLB export for marker Actions or existing NLA tracks."""
     kwargs = {
-        'filepath': operator.filepath,
         'export_format': 'GLB',
         'export_animations': True,
         'export_def_bones': scene.m2nla_only_deform_bones,
@@ -338,31 +390,28 @@ def _run_glb_export(operator, scene, marker_actions=False):
     else:
         kwargs['export_animation_mode'] = 'NLA_TRACKS'
 
-    try:
-        bpy.ops.export_scene.gltf(
-            use_selection=scene.m2nla_selected_only,
-            **kwargs,
-        )
-    except TypeError:
-        # Compatibility fallback for Blender versions using the older glTF
-        # NLA option instead of export_animation_mode.
-        kwargs.pop('export_animation_mode', None)
-        kwargs.pop('export_merge_animation', None)
-        kwargs.pop('export_anim_single_armature', None)
-        kwargs.pop('export_rest_position_armature', None)
-        kwargs['export_nla_strips'] = True
+    def export(filepath):
         try:
-            bpy.ops.export_scene.gltf(
+            return bpy.ops.export_scene.gltf(
+                filepath=filepath,
                 use_selection=scene.m2nla_selected_only,
                 **kwargs,
             )
-        except Exception as exc:
-            operator.report({'ERROR'}, f"GLB export failed: {exc}")
-            return False
-    except Exception as exc:
-        operator.report({'ERROR'}, f"GLB export failed: {exc}")
-        return False
-    return True
+        except TypeError:
+            # Compatibility fallback for Blender versions using the older
+            # glTF NLA option instead of export_animation_mode.
+            kwargs.pop('export_animation_mode', None)
+            kwargs.pop('export_merge_animation', None)
+            kwargs.pop('export_anim_single_armature', None)
+            kwargs.pop('export_rest_position_armature', None)
+            kwargs['export_nla_strips'] = True
+            return bpy.ops.export_scene.gltf(
+                filepath=filepath,
+                use_selection=scene.m2nla_selected_only,
+                **kwargs,
+            )
+
+    return _run_staged_export(operator, "GLB", export)
 
 
 def _finish_export(operator, scene, message):
@@ -438,8 +487,13 @@ def _invoke_export_browser(operator, context, event, filename_suffix=""):
 
 
 def _prepare_export_destination(scene, operator):
-    """Resolve the selected filepath and make sure its directory exists."""
-    operator.filepath = os.path.normpath(bpy.path.abspath(operator.filepath))
+    """Resolve the selected filepath and make sure its directory exists.
+
+    The extension is enforced here because the staged export checks for the
+    exact file name, and the glTF exporter would otherwise append ``.glb``.
+    """
+    operator.filepath = os.path.normpath(bpy.path.ensure_ext(
+        bpy.path.abspath(operator.filepath), operator.filename_ext))
     directory = os.path.dirname(operator.filepath)
     try:
         os.makedirs(directory, exist_ok=True)
