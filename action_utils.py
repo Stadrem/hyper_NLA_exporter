@@ -135,6 +135,19 @@ def _ensure_channelbag(action, datablock=None):
     return strip.channelbags[0]
 
 
+def _new_fcurve(channelbag, data_path, index, group_name=""):
+    """Create an F-Curve in *channelbag*, filed under *group_name*.
+
+    Channelbag ``fcurves.new`` takes ``group_name``. The legacy
+    ``action_group`` keyword raises TypeError there, and the old fallback
+    for that error silently dropped every channel group.
+    """
+    if group_name:
+        return channelbag.fcurves.new(
+            data_path=data_path, index=index, group_name=group_name)
+    return channelbag.fcurves.new(data_path=data_path, index=index)
+
+
 # ============================================================
 
 #  Action splitting / merging
@@ -195,12 +208,57 @@ def _bezier_subsegment(points, start_factor, end_factor):
     return left
 
 
+# Handle types Blender recomputes from the neighbouring keys on update().
+_NEIGHBOR_HANDLE_TYPES = {'AUTO', 'AUTO_CLAMPED', 'VECTOR'}
+
+
+def _copy_key_shape(src_kp, dst_kp):
+    """Copy interpolation and easing parameters of one keyframe."""
+    dst_kp.interpolation = src_kp.interpolation
+    dst_kp.easing = src_kp.easing
+    dst_kp.back = src_kp.back
+    dst_kp.amplitude = src_kp.amplitude
+    dst_kp.period = src_kp.period
+
+
+def _freeze_source_handles(dst_kp, src_kp, map_frame):
+    """Pin *dst_kp* to the handles *src_kp* has inside its original curve.
+
+    AUTO, AUTO_CLAMPED, and VECTOR handles are derived from the adjacent
+    keys. Once a clip drops one of those neighbours, ``update()`` would
+    rebuild the handles from the remaining keys and bend the clip. FREE
+    handles keep the exact source coordinates; *map_frame* converts a
+    source frame into the destination's time.
+    """
+    dst_kp.handle_left_type = 'FREE'
+    dst_kp.handle_right_type = 'FREE'
+    dst_kp.handle_left = (map_frame(src_kp.handle_left[0]),
+                          src_kp.handle_left[1])
+    dst_kp.handle_right = (map_frame(src_kp.handle_right[0]),
+                           src_kp.handle_right[1])
+
+
+def _same_neighbor(a, b, epsilon=1e-6):
+    """Compare two optional neighbour frames or ``(frame, value)`` keys."""
+    if a is None or b is None:
+        return a is b
+    if not isinstance(a, tuple):
+        a, b = (a,), (b,)
+    return all(abs(x - y) <= epsilon for x, y in zip(a, b))
+
+
 def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
     """Preserve source interpolation when segment boundaries cut a curve.
 
     For Bezier curves this trims the original cubic with de Casteljau's
     algorithm and assigns the exact new boundary handles. This avoids the
     curve distortion caused by inserting a value-only boundary key.
+
+    Easing interpolations (QUAD, SINE, BACK, ELASTIC, ...) are equations
+    over the whole key interval, so a trimmed interval cannot reuse them;
+    it is baked at the one-frame export rate instead. A copied key whose
+    automatic handles depended on a neighbour the clip dropped is frozen to
+    its source handles, even when a marker sits exactly on that key.
     """
     if len(copied_points) < 2:
         return
@@ -230,6 +288,32 @@ def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
         rebound_points.append((source_frame, destination_keys[index]))
     rebound_points.sort(key=lambda item: item[0])
 
+    # Freeze first: a clipped Bezier interval below then overwrites the
+    # handle on its trimmed side with the exact de Casteljau coordinates.
+    source_frames = [point.co[0] for point in source_keys]
+    copied_frames = [frame for frame, _point in rebound_points]
+    for position, (frame, dst_point) in enumerate(rebound_points):
+        index = bisect_left(source_frames, frame - epsilon)
+        if (index >= len(source_keys)
+                or abs(source_frames[index] - frame) > epsilon):
+            continue  # A boundary key, not a copy of a source key.
+        src_point = source_keys[index]
+        if (src_point.handle_left_type not in _NEIGHBOR_HANDLE_TYPES
+                and src_point.handle_right_type
+                not in _NEIGHBOR_HANDLE_TYPES):
+            continue
+        source_prev = source_frames[index - 1] if index > 0 else None
+        source_next = (source_frames[index + 1]
+                       if index + 1 < len(source_frames) else None)
+        copied_prev = copied_frames[position - 1] if position > 0 else None
+        copied_next = (copied_frames[position + 1]
+                       if position + 1 < len(copied_frames) else None)
+        if (not _same_neighbor(source_prev, copied_prev)
+                or not _same_neighbor(source_next, copied_next)):
+            _freeze_source_handles(
+                dst_point, src_point, lambda x: x + offset)
+
+    bake_ranges = []
     source_index = 0
     for (frame_a, dst_a), (frame_b, dst_b) in zip(
             rebound_points, rebound_points[1:]):
@@ -254,14 +338,18 @@ def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
 
         source_a, source_b = source_pair
         dst_a.interpolation = source_a.interpolation
-        if source_a.interpolation != 'BEZIER':
-            continue
 
-        # A complete source interval already has its original handles and
-        # handle types. Only rebuild handles when a marker clips the cubic.
+        # A complete source interval already has its original handles,
+        # handle types, and easing. Only rework it when a marker clips it.
         clips_start = abs(frame_a - source_a.co[0]) > epsilon
         clips_end = abs(frame_b - source_b.co[0]) > epsilon
         if not clips_start and not clips_end:
+            continue
+        if source_a.interpolation in {'CONSTANT', 'LINEAR'}:
+            continue  # Any part of these is still the same interpolation.
+        if source_a.interpolation != 'BEZIER':
+            dst_a.interpolation = 'LINEAR'
+            bake_ranges.append((frame_a, frame_b))
             continue
 
         points = (
@@ -290,6 +378,16 @@ def _preserve_clipped_curve_shape(src_fc, dst_fc, copied_points, offset):
             handle_left[0] + offset,
             handle_left[1],
         )
+
+    # Inserting relocates the RNA wrappers used above, so bake last.
+    for frame_a, frame_b in bake_ranges:
+        for frame in range(floor(frame_a) + 1, ceil(frame_b)):
+            if frame_a + epsilon < frame < frame_b - epsilon:
+                point = dst_fc.keyframe_points.insert(
+                    frame=frame + offset, value=src_fc.evaluate(frame),
+                    options={'FAST'})
+                point.interpolation = 'LINEAR'
+
 
 def _curve_is_enabled(fcurve):
     """Whether a channel contributes animation, including its group mute."""
@@ -374,17 +472,8 @@ def copy_segment_to_action(source_action, dst_action, start, end,
                 and not need_start_key and not need_end_key):
             continue
 
-        try:
-            new_fc = dst_cb.fcurves.new(
-                data_path=src_fc.data_path,
-                index=src_fc.array_index,
-                action_group=group_name,
-            )
-        except TypeError:
-            new_fc = dst_cb.fcurves.new(
-                data_path=src_fc.data_path,
-                index=src_fc.array_index,
-            )
+        new_fc = _new_fcurve(
+            dst_cb, src_fc.data_path, src_fc.array_index, group_name)
 
         new_fc.extrapolation = src_fc.extrapolation
         new_fc.auto_smoothing = src_fc.auto_smoothing
@@ -408,8 +497,7 @@ def copy_segment_to_action(source_action, dst_action, start, end,
             f = src_kp.co[0] + offset
             new_kp = new_fc.keyframe_points.insert(
                 frame=f, value=src_kp.co[1], options={'FAST'})
-            new_kp.interpolation     = src_kp.interpolation
-            new_kp.easing            = src_kp.easing
+            _copy_key_shape(src_kp, new_kp)
             new_kp.handle_left_type  = src_kp.handle_left_type
             new_kp.handle_right_type = src_kp.handle_right_type
             new_kp.handle_left  = (src_kp.handle_left[0]  + offset,
@@ -452,6 +540,7 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
     dst_cb = _ensure_channelbag(merged, datablock=obj)
 
     dst_map = {}
+    neighbor_checks = {}
     has_any = False
 
     # Collect strip info for marker creation
@@ -489,42 +578,72 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
                 group_name = src_fc.group.name if src_fc.group else ""
 
                 if key not in dst_map:
-                    try:
-                        new_fc = dst_cb.fcurves.new(
-                            data_path=src_fc.data_path,
-                            index=src_fc.array_index,
-                            action_group=group_name,
-                        )
-                    except TypeError:
-                        new_fc = dst_cb.fcurves.new(
-                            data_path=src_fc.data_path,
-                            index=src_fc.array_index,
-                        )
-                    dst_map[key] = new_fc
+                    dst_map[key] = _new_fcurve(
+                        dst_cb, src_fc.data_path, src_fc.array_index,
+                        group_name)
 
                 dst_fc = dst_map[key]
 
-                for src_kp in src_fc.keyframe_points:
+                # Convert action-local frame to timeline frame:
+                #   timeline_frame = strip.frame_start
+                #                  + (action_frame - action_frame_start) * scale
+                def to_timeline(frame, start=timeline_start,
+                                action_start=act_start, factor=scale):
+                    return start + (frame - action_start) * factor
+
+                src_points = list(src_fc.keyframe_points)
+                for index, src_kp in enumerate(src_points):
                     # A strip can use only part of its Action. Do not leak
                     # keys from outside that selected Action range.
                     if not act_start <= src_kp.co[0] <= act_end:
                         continue
 
-                    # Convert action-local frame to timeline frame:
-                    #   timeline_frame = strip.frame_start
-                    #                  + (action_frame - action_frame_start) * scale
-                    f = timeline_start + (src_kp.co[0] - act_start) * scale
+                    f = to_timeline(src_kp.co[0])
                     new_kp = dst_fc.keyframe_points.insert(
                         frame=f, value=src_kp.co[1], options={'FAST'})
-                    new_kp.interpolation     = src_kp.interpolation
-                    new_kp.easing            = src_kp.easing
+                    _copy_key_shape(src_kp, new_kp)
                     new_kp.handle_left_type  = src_kp.handle_left_type
                     new_kp.handle_right_type = src_kp.handle_right_type
-                    hl_f = timeline_start + (src_kp.handle_left[0]  - act_start) * scale
-                    hr_f = timeline_start + (src_kp.handle_right[0] - act_start) * scale
-                    new_kp.handle_left  = (hl_f, src_kp.handle_left[1])
-                    new_kp.handle_right = (hr_f, src_kp.handle_right[1])
+                    new_kp.handle_left  = (to_timeline(src_kp.handle_left[0]),
+                                           src_kp.handle_left[1])
+                    new_kp.handle_right = (to_timeline(src_kp.handle_right[0]),
+                                           src_kp.handle_right[1])
                     has_any = True
+
+                    if (src_kp.handle_left_type in _NEIGHBOR_HANDLE_TYPES
+                            or src_kp.handle_right_type
+                            in _NEIGHBOR_HANDLE_TYPES):
+                        neighbors = [
+                            (to_timeline(point.co[0]), point.co[1])
+                            if point is not None else None
+                            for point in (
+                                src_points[index - 1] if index > 0 else None,
+                                src_points[index + 1]
+                                if index + 1 < len(src_points) else None,
+                            )
+                        ]
+                        neighbor_checks.setdefault(key, []).append((
+                            f, src_kp, to_timeline, neighbors, scale != 1.0))
+
+    # Automatic handles follow the neighbouring keys. Where a strip's Action
+    # range or an adjacent strip gives a merged key other neighbours, or the
+    # strip rescales time, pin the handles the key had inside its strip.
+    for key, checks in neighbor_checks.items():
+        points = list(dst_map[key].keyframe_points)
+        frames = [point.co[0] for point in points]
+        for frame, src_kp, to_timeline, neighbors, rescaled in checks:
+            index = bisect_left(frames, frame - 1e-6)
+            if index >= len(points) or abs(frames[index] - frame) > 1e-6:
+                continue
+            merged_neighbors = [
+                tuple(points[index - 1].co) if index > 0 else None,
+                tuple(points[index + 1].co)
+                if index + 1 < len(points) else None,
+            ]
+            if rescaled or not all(
+                    _same_neighbor(a, b)
+                    for a, b in zip(neighbors, merged_neighbors)):
+                _freeze_source_handles(points[index], src_kp, to_timeline)
 
     for fc in dst_map.values():
         fc.update()
@@ -588,13 +707,7 @@ def _preserve_static_transforms(dst_action, obj, src_action,
             return  # Already keyframed in source → copy_segment handles it
         if (data_path, index) in dst_channels:
             return  # Already in destination
-        try:
-            fc = dst_cb.fcurves.new(
-                data_path=data_path, index=index,
-                action_group=group_name)
-        except TypeError:
-            fc = dst_cb.fcurves.new(
-                data_path=data_path, index=index)
+        fc = _new_fcurve(dst_cb, data_path, index, group_name)
         fc.keyframe_points.insert(frame=0, value=value)
         fc.update()
 

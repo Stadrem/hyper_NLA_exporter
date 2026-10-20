@@ -19,10 +19,10 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 
 * ⚡ **Marker-Based Auto-Splitting**: Define clip names and end frames using standard timeline markers. Set **First Clip Start** in the panel, and the addon calculates every segment automatically.
 * 🚀 **One-Click Quick Export**: Automatically split, retime to frame 1, export, and clean up temporary tracks in a single operation.
-* 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose).
+* 💾 **Auto Export (Auto Save)**: Skip the file browser and save a predictable, overwrite-ready FBX or GLB beside your `.blend` file (or in a folder you choose). A failed export never replaces the previous file.
 * 🔄 **Non-Destructive Design**: Keeps your active action and workspace entirely untouched. All splitting, retiming, and NLA generation are handled in temporary memory.
-* 📐 **Boundary Curve Preservation**: Inserts missing segment boundaries and trims Bezier handles so both poses and curve motion remain faithful across splits.
-* ✅ **Export Safety**: Checks duplicate or blank clip names, clips shorter than 2 frames, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. An Action with no keyframes is ignored instead of counting as an export target. Existing NLA tracks are temporarily isolated during Quick Export and restored afterward.
+* 📐 **Boundary Curve Preservation**: Inserts missing segment boundaries, trims Bezier handles, keeps automatic handles of keys that sit on a marker, and bakes cut easing curves per frame, so both poses and curve motion remain faithful across splits.
+* ✅ **Export Safety**: Checks duplicate or blank clip names, clips shorter than 2 frames, markers sharing a frame, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. An Action with no keyframes is ignored instead of counting as an export target. Existing NLA tracks on every object and Shape Key in the export scope are temporarily isolated during Quick Export and restored afterward, including owners that have NLA but no active Action.
 * 📂 **Open Export Folder**: Opens the containing folder automatically after a successful FBX/GLB export.
 * ⚙️ **Advanced Manual NLA Tools**: Easily convert timeline markers to permanent NLA tracks, merge NLA tracks back into a single Action, or run selective cleanups.
 
@@ -74,8 +74,9 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 * **Settings**:
   * *Export Path*: Sets the FBX/GLB output folder. The default `//Export/` means an `Export` folder beside the saved `.blend` file; the folder is created automatically.
   * *Auto Export (Auto Save)*: Skips the file browser and overwrites `<blend filename>.fbx` or `<blend filename>.glb` directly in **Export Path**. Save the `.blend` file first: its filename determines the export name, and relative paths such as `//Export/` are resolved beside it. This option applies to **Quick Export (Marker Split)**; turn it off to choose a filename and location in the normal file browser.
+  * Every export is first written to a temporary folder beside the target. It replaces the existing file only if Blender's exporter reports success and the new file is not empty, so a cancelled or failed export keeps the last good file.
   * *Only Deform Bones*: Automatically strips out control bones during export, optimizing the file size for game engines.
-  * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift.
+  * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift. With it off, every FBX/GLB clip still spans its full marker segment; curves hold their first/last key value up to the clip edges.
   * *Selected Only*: Processes only the active selection. For Quick Export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete in both FBX and GLB.
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
 * **Quick Export (Marker Split)**:
@@ -120,24 +121,30 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 2. **Clips must be at least 2 frames long**:
    * A marker placed on **First Clip Start**, or two markers on adjacent frames, produces a 1-frame clip. Blender cannot create a zero-length NLA strip and would widen it to 2 frames, so the exported take would no longer match the marker layout.
    * Preflight reports these clips by name and blocks the export; the panel marks the offending row in red. Move the marker at least one frame later, or mute it with the eye icon.
+   * Two markers on the **same** frame cannot both end a clip, so one of them would silently disappear. Preflight and Markers → NLA report the frame and marker names as an error, and the panel lists them in red. Move one marker, or mute both.
 3. **Empty Actions are ignored, wrong slots are not**:
    * A skinned mesh that carries a leftover Action with no keyframes is not an export target. Without this, that mesh would count as a second animated object and block FBX Quick Export, even though it contributes nothing.
    * If an Action *does* hold F-Curves but the object points at a slot that has none, the object would export without its animation. That stays a preflight error naming the object and the Action.
 4. **The export does not depend on the playhead**:
    * Blender's FBX exporter writes each bone's default `Lcl Translation` / `Lcl Rotation` from the pose evaluated at the current frame. A viewer or engine that falls back to those defaults for a bone would show one clip holding another clip's pose, depending on where the playhead happened to sit at export time.
-   * Quick Export pins the playhead to **First Clip Start** while it builds the temporary split and restores it afterwards, so the same scene always produces the same file.
+   * Quick Export pins the playhead to **First Clip Start** *before* it builds the temporary split: the scene is evaluated there once with the existing NLA, and again after that NLA is muted. Constant values the split writes into every clip (un-keyed bone transforms such as a Root scale of 100, driver results, values left by the muted NLA) are therefore read at **First Clip Start**, not at wherever the playhead was. The playhead stays there during export and is restored afterwards, so the same scene always produces the same file.
 5. **Blender 5.1 Layered Action Architecture**:
    * Supports Blender 5.x's Slot, Layer, Strip, and Channelbag systems. When multiple objects share one Action, only the F-Curves from each object's assigned Action Slot are split.
 6. **Hierarchy-wide marker splitting**:
    * Quick Export validates and splits the same visible descendant hierarchy that it exports. Selecting an unanimated parent also finds its animated children. Multiple animated descendants trigger the same FBX single-object restriction as multiple directly selected objects.
 7. **F-Curve modifiers**:
    * Active modifiers such as Cycles and Noise, and sampled curves, are evaluated in source time and baked at one-frame intervals. Their clip endpoints are included even with Create Boundary Keys off. Ordinary keyframed curves retain their Bezier interpolation; muted curves and groups are excluded.
+   * Easing interpolations (Quad, Sine, Back, Elastic, …) keep their easing, Back, Amplitude, and Period when a whole key interval is inside the clip. A marker that cuts such an interval cannot reuse the easing equation, so only that part is baked at one-frame intervals.
+   * Automatic (Auto, Auto Clamped, Vector) handles depend on the neighbouring keys. When a clip drops a key's neighbour, including a key placed exactly on a marker, its handles are frozen to the original curve's coordinates as Free handles. Keys whose neighbours stay in the clip keep their automatic handles. NLA → Action applies the same rule.
+   * Channel groups (for example per-bone groups) are copied into every clip.
 8. **Shape Key animation uses GLB**:
    * Quick GLB splits Shape Key Actions into the same marker clips as object and bone animation, including shape-only meshes and meshes beneath the selection.
    * To retain morph targets, exports containing Shape Keys use base meshes: non-armature mesh modifiers are not applied anywhere in that export. Preflight warns about affected meshes. Exports without Shape Keys keep applying modifiers as before; skinning remains supported.
    * Quick FBX blocks animated Shape Keys with an explanation because Blender's per-NLA-take exporter does not synchronize their Actions. Use Quick GLB for combined skeletal and facial clips.
 9. **Manual tool data preservation**:
    * Markers → NLA builds every requested clip before replacing existing tracks. Empty or failed clips cancel the conversion and preserve the original animation.
+   * Converted strips use Extrapolation **Nothing**, so each track only plays inside its own clip and never covers the clips on the tracks below with its first pose.
+   * NLA strip names are unique per object. When Clear Existing NLA removes an old strip named like a clip, the new strip takes the clip name back; kept strips with that name force a `.001` suffix, which the operator reports. Quick Export temporarily renames such existing strips so its clips always carry the marker names.
    * Convert, merge, and cleanup protect hand-authored Actions with a Fake User before removing their references, so they survive saving and reopening. Generated Actions are released when no longer needed.
 
 ---
