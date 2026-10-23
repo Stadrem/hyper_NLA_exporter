@@ -160,6 +160,36 @@ def test_sequential_clips_keep_their_frames():
     assert frames == [1, 60, 61, 100], frames
 
 
+def test_curve_holds_until_its_strip_ends():
+    """Keys that end before the strip must not ease into the next clip."""
+    scene = reset_scene()
+    body = make_empty('Body')
+    yes = shared_action('Yes', ((body, ((0, 0.0), (5, 10.0))),))
+    no = shared_action('No', ((body, ((10, -5.0), (19, -10.0))),))
+    for action in (yes, no):
+        for point in action.layers[0].strips[0].channelbags[0] \
+                .fcurves[0].keyframe_points:
+            point.interpolation = 'BEZIER'
+    add_strip(body, yes, 1, (0, 19))
+    add_strip(body, no, 1, (0, 19))
+    result, messages = run(operators.MARKERNLA_OT_merge)
+    assert result == {'FINISHED'}, messages
+    assert markers(scene) == [(20, 'Yes'), (40, 'No')], markers(scene)
+    # Yes holds 10 after its last key; No holds -5 before its first key.
+    assert_x(scene, body, ((6, 10.0), (13, 10.0), (20, 10.0),
+                           (21, -5.0), (26, -5.0), (31, -5.0), (40, -10.0)))
+
+
+def test_all_muted_tracks_are_reported():
+    scene, objects, _sources = _variant_scene()
+    for obj in objects:
+        for track in obj.animation_data.nla_tracks:
+            track.mute = True
+    result, messages = run(operators.MARKERNLA_OT_merge)
+    assert result == {'CANCELLED'}
+    assert 'muted' in messages[0][1], messages
+
+
 def test_merge_makes_one_slot_per_object():
     scene = reset_scene()
     mover = make_empty('Mover')
