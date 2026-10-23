@@ -6,6 +6,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
 from .action_utils import (
+    find_action_slot,
     is_generated_action,
     merge_nla_to_action,
     release_generated_action,
@@ -450,8 +451,10 @@ class MARKERNLA_OT_merge(Operator):
     bl_idname  = "markernla.merge"
     bl_label   = "NLA → Action"
     bl_description = (
-        "Combine simple NLA strips into one action at their timeline "
-        "positions (ignores repeat, reverse, blending, influence, and modifiers)"
+        "Combine simple NLA strips into one shared action, one clip per "
+        "strip name. Clips that overlap are placed one after another, with "
+        "a marker at each clip's end (ignores repeat, reverse, blending, "
+        "influence, and modifiers)"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -467,11 +470,18 @@ class MARKERNLA_OT_merge(Operator):
             self.report({'ERROR'}, "No selected objects with NLA tracks")
             return {'CANCELLED'}
 
+        # One Action with a Slot per object keeps clips that span several
+        # objects together, the way Markers → NLA and shared Actions use them.
+        name = (f"{objs[0].name}_Merged" if len(objs) == 1 else "NLA_Merged")
+        merged = merge_nla_to_action(objs, name=name, scene=scene)
+        if merged is None:
+            self.report({'ERROR'}, "No keyframes found in NLA strips")
+            return {'CANCELLED'}
+
         merged_count = 0
         for obj in objs:
-            merged = merge_nla_to_action(obj, name=f"{obj.name}_Merged",
-                                          scene=scene)
-            if merged is None:
+            slot = find_action_slot(merged, obj)
+            if slot is None:
                 continue
 
             if scene.m2nla_clear_nla:
@@ -480,15 +490,11 @@ class MARKERNLA_OT_merge(Operator):
 
             _preserve_or_release_action(obj.animation_data.action)
             obj.animation_data.action = merged
-            if merged.slots:
-                obj.animation_data.action_slot = merged.slots[0]
+            obj.animation_data.action_slot = slot
             merged_count += 1
 
-        if merged_count == 0:
-            self.report({'ERROR'}, "No keyframes found in NLA strips")
-            return {'CANCELLED'}
-
-        self.report({'INFO'}, f"Merged NLA into actions for {merged_count} objects")
+        self.report({'INFO'}, (
+            f"Merged NLA into {merged.name} for {merged_count} objects"))
         return {'FINISHED'}
 
 

@@ -89,19 +89,29 @@ def _action_is_empty(action):
     return True
 
 
+def find_action_slot(action, datablock):
+    """Return the Slot of *action* made for *datablock*, or None.
+
+    ActionSlots are keyed by identifiers such as "OBRig", not by the
+    datablock's bare name. Match the user-facing display name and ID type
+    instead of constructing Blender's ID prefix. Blender 5.x calls the name
+    ``name_display``; without it no Slot ever matched and every call made
+    another "OBRig.001" Slot.
+    """
+    return next((candidate for candidate in getattr(action, 'slots', ())
+                 if getattr(candidate, 'name_display',
+                            getattr(candidate, 'display_name', None))
+                 == datablock.name
+                 and (getattr(candidate, 'target_id_type', None)
+                      in {None, datablock.id_type})), None)
+
+
 def _ensure_channelbag(action, datablock=None):
     """Ensure *action* has Slot → Layer → Strip → Channelbag and return it."""
     slot = None
     if hasattr(action, 'slots'):
         if datablock:
-            # ActionSlots are keyed by identifiers such as "OBRig", not by
-            # the datablock's bare name. Match the user-facing display name
-            # and ID type instead of constructing Blender's ID prefix.
-            slot = next((candidate for candidate in action.slots
-                         if (getattr(candidate, 'display_name', None)
-                             == datablock.name)
-                         and (getattr(candidate, 'target_id_type', None)
-                              in {None, datablock.id_type})), None)
+            slot = find_action_slot(action, datablock)
             if not slot:
                 if hasattr(action.slots, 'new_for_id'):
                     slot = action.slots.new_for_id(datablock)
@@ -525,34 +535,84 @@ def copy_segment_to_action(source_action, dst_action, start, end,
     return has_any
 
 
-def merge_nla_to_action(obj, name="Merged", scene=None):
-    """Merge all NLA strips back into a single Action.
+def _collect_merge_clips(objects):
+    """Group unmuted NLA strips into clips and lay the clips out in sequence.
 
-    *scene* – if given, timeline markers are created at each strip's
-    end frame so the merged action can later be re-split.
+    A clip is every strip sharing one strip name across *objects*. Markers
+    → NLA names each object's strip after its segment while giving every
+    object its own Action, so the strip name, not the Action, identifies a
+    clip. Hand-built NLA often stacks clips as alternatives on the same
+    frames (Yes/No variants); merging those in place overwrote one with the
+    other. Each clip keeps its original start unless an earlier clip still
+    occupies it, in which case the whole clip, every object's strip
+    included, moves to the first free frame. Objects keep their timing
+    relative to one another inside a clip.
     """
-    anim = obj.animation_data
-    if anim is None:
+    clips = {}
+    for obj in objects:
+        for track in obj.animation_data.nla_tracks:
+            if getattr(track, 'mute', False):
+                continue
+            for strip in track.strips:
+                if strip.action is None or getattr(strip, 'mute', False):
+                    continue
+                clip = clips.get(strip.name)
+                if clip is None:
+                    clip = clips[strip.name] = {
+                        'name': strip.name,
+                        'start': strip.frame_start,
+                        'end': strip.frame_end,
+                        'order': len(clips),
+                        'strips': [],
+                    }
+                clip['start'] = min(clip['start'], strip.frame_start)
+                clip['end'] = max(clip['end'], strip.frame_end)
+                clip['strips'].append((obj, strip))
+
+    ordered = sorted(clips.values(),
+                     key=lambda clip: (clip['start'], clip['order']))
+    next_free = None
+    for clip in ordered:
+        start = clip['start']
+        if next_free is not None:
+            start = max(start, next_free)
+        clip['shift'] = start - clip['start']
+        # Markers sit on whole frames; the next clip starts after this one.
+        clip['marker'] = ceil(clip['end'] + clip['shift'] - 1e-4)
+        next_free = clip['marker'] + 1
+    return ordered
+
+
+def merge_nla_to_action(objects, name="Merged", scene=None):
+    """Merge the NLA strips of *objects* into one shared Action.
+
+    *objects* is one datablock or an iterable of them. Each object gets its
+    own Slot in the merged Action. Strips are grouped into clips by strip
+    name and the clips are placed one after another (see
+    ``_collect_merge_clips``), so overlapping alternatives no longer land
+    on the same frames.
+    *scene* – if given, one timeline marker is created at each clip's end
+    frame so the merged Action can later be re-split.
+    """
+    if isinstance(objects, bpy.types.ID):
+        objects = [objects]
+    # Sorted by name so clips that start together keep a stable order.
+    objects = sorted((obj for obj in objects if obj.animation_data),
+                     key=lambda obj: obj.name)
+    clips = _collect_merge_clips(objects)
+    if not clips:
         return None
 
     merged = bpy.data.actions.new(name=name)
     merged.use_fake_user = True
-    dst_cb = _ensure_channelbag(merged, datablock=obj)
 
+    dst_bags = {}
     dst_map = {}
     neighbor_checks = {}
     has_any = False
 
-    # Collect strip info for marker creation
-    strip_infos = []
-
-    for track in anim.nla_tracks:
-        if getattr(track, 'mute', False):
-            continue
-        for strip in track.strips:
-            if strip.action is None or getattr(strip, 'mute', False):
-                continue
-
+    for clip in clips:
+        for obj, strip in clip['strips']:
             # -- Map action-local frames to timeline frames ----------
             # NLA strip properties:
             #   strip.frame_start / frame_end  – timeline position
@@ -563,9 +623,7 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
             scale     = getattr(strip, 'scale', 1.0)
             if scale == 0:
                 scale = 1.0
-            timeline_start = strip.frame_start
-
-            strip_infos.append((strip.name, strip.frame_start, strip.frame_end))
+            timeline_start = strip.frame_start + clip['shift']
 
             strip_slot = getattr(strip, 'action_slot', None)
             src_fcurves = _get_fcurves(strip.action, strip_slot)
@@ -574,10 +632,15 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
                 if not src_fc.keyframe_points:
                     continue
 
-                key = (src_fc.data_path, src_fc.array_index)
+                key = (obj.as_pointer(), src_fc.data_path,
+                       src_fc.array_index)
                 group_name = src_fc.group.name if src_fc.group else ""
 
                 if key not in dst_map:
+                    dst_cb = dst_bags.get(obj.as_pointer())
+                    if dst_cb is None:
+                        dst_cb = dst_bags[obj.as_pointer()] = (
+                            _ensure_channelbag(merged, datablock=obj))
                     dst_map[key] = _new_fcurve(
                         dst_cb, src_fc.data_path, src_fc.array_index,
                         group_name)
@@ -585,7 +648,7 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
                 dst_fc = dst_map[key]
 
                 # Convert action-local frame to timeline frame:
-                #   timeline_frame = strip.frame_start
+                #   timeline_frame = strip.frame_start + clip shift
                 #                  + (action_frame - action_frame_start) * scale
                 def to_timeline(frame, start=timeline_start,
                                 action_start=act_start, factor=scale):
@@ -652,17 +715,14 @@ def merge_nla_to_action(obj, name="Merged", scene=None):
         bpy.data.actions.remove(merged)
         return None
 
-    # -- Create timeline markers at each strip boundary ------------
-    if scene is not None and strip_infos:
-        # Sort strips by timeline position
-        strip_infos.sort(key=lambda x: x[1])
-        for strip_name, _start, end in strip_infos:
-            end_frame = int(round(end))
+    # -- One timeline marker at each clip's end -------------------
+    if scene is not None:
+        for clip in clips:
             # Avoid duplicate markers at the same frame
             existing = [m for m in scene.timeline_markers
-                        if m.frame == end_frame]
+                        if m.frame == clip['marker']]
             if not existing:
-                scene.timeline_markers.new(strip_name, frame=end_frame)
+                scene.timeline_markers.new(clip['name'], frame=clip['marker'])
 
     return merged
 
