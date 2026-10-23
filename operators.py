@@ -475,7 +475,15 @@ class MARKERNLA_OT_merge(Operator):
         name = (f"{objs[0].name}_Merged" if len(objs) == 1 else "NLA_Merged")
         merged = merge_nla_to_action(objs, name=name, scene=scene)
         if merged is None:
-            self.report({'ERROR'}, "No keyframes found in NLA strips")
+            if all(track.mute for obj in objs
+                   for track in obj.animation_data.nla_tracks):
+                # Unchecked tracks in the NLA editor are muted, and merging
+                # skips muted tracks like playback does.
+                self.report({'ERROR'}, (
+                    "All NLA tracks are muted; check the tracks to merge "
+                    "in the NLA editor"))
+            else:
+                self.report({'ERROR'}, "No keyframes found in NLA strips")
             return {'CANCELLED'}
 
         merged_count = 0

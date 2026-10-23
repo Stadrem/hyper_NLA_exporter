@@ -85,7 +85,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *FBX*: Splits one animated object into separate takes in a single `.fbx` file. Select the animated rig plus any non-animated mesh hierarchy; multiple objects with active Actions are blocked because Blender's FBX exporter does not merge their same-named takes safely.
   * *GLB*: Splits and exports as separate clips in a single `.glb` file, including multiple animated rigs in the same scene.
 * **Manual NLA Tools (Foldout)**: Contains permanent conversion actions (`Markers → NLA` and `NLA → Action`), existing NLA exporters, and cleanups.
-  * *NLA → Action*: Merges the selected objects into one Action with a Slot per object. Strips with the same name form one clip; clips stacked on the same frames (for example Yes/No variants) are placed one after another, and each clip gets one marker at its end so `Markers → NLA` can split it again.
+  * *NLA → Action*: Merges the selected objects into one Action with a Slot per object. Strips with the same name form one clip; clips stacked on the same frames (for example Yes/No variants) are placed one after another, and each clip gets one marker at its end so `Markers → NLA` can split it again. Each strip range is copied like an exported clip, so a curve whose keys end early holds its value until the clip ends instead of easing into the next clip. Muted (unchecked) NLA tracks are skipped.
 
 ---
 

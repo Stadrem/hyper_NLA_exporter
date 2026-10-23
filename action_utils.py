@@ -610,106 +610,125 @@ def merge_nla_to_action(objects, name="Merged", scene=None):
     dst_map = {}
     neighbor_checks = {}
     has_any = False
+    # Clipped copies of each strip's Action range. Their keys are read again
+    # when handles are pinned below, so they are removed only at the end.
+    pieces = []
 
-    for clip in clips:
-        for obj, strip in clip['strips']:
-            # -- Map action-local frames to timeline frames ----------
-            # NLA strip properties:
-            #   strip.frame_start / frame_end  – timeline position
-            #   strip.action_frame_start / action_frame_end – action range used
-            #   strip.scale – time scale factor
-            act_start = getattr(strip, 'action_frame_start', 0.0)
-            act_end   = getattr(strip, 'action_frame_end', act_start)
-            scale     = getattr(strip, 'scale', 1.0)
-            if scale == 0:
-                scale = 1.0
-            timeline_start = strip.frame_start + clip['shift']
+    try:
+        for clip in clips:
+            for obj, strip in clip['strips']:
+                # -- Map action-local frames to timeline frames ----------
+                # NLA strip properties:
+                #   strip.frame_start / frame_end  – timeline position
+                #   strip.action_frame_start / action_frame_end – range used
+                #   strip.scale – time scale factor
+                act_start = getattr(strip, 'action_frame_start', 0.0)
+                act_end   = getattr(strip, 'action_frame_end', act_start)
+                scale     = getattr(strip, 'scale', 1.0)
+                if scale == 0:
+                    scale = 1.0
+                timeline_start = strip.frame_start + clip['shift']
 
-            strip_slot = getattr(strip, 'action_slot', None)
-            src_fcurves = _get_fcurves(strip.action, strip_slot)
-
-            for src_fc in src_fcurves:
-                if not src_fc.keyframe_points:
+                # Copy the used range the way clip export does: boundary keys
+                # on both ends, holds that follow the FCurve extrapolation,
+                # trimmed Bezier and easing intervals. Raw keys let a curve
+                # whose keys end early ease into the next clip's first key
+                # instead of holding its last value until the strip ends.
+                piece = bpy.data.actions.new(name="m2nla_merge_piece")
+                pieces.append(piece)
+                if not copy_segment_to_action(
+                        strip.action, piece, act_start, act_end,
+                        create_boundaries=True, datablock=obj,
+                        source_slot=getattr(strip, 'action_slot', None)):
                     continue
 
-                key = (obj.as_pointer(), src_fc.data_path,
-                       src_fc.array_index)
-                group_name = src_fc.group.name if src_fc.group else ""
-
-                if key not in dst_map:
-                    dst_cb = dst_bags.get(obj.as_pointer())
-                    if dst_cb is None:
-                        dst_cb = dst_bags[obj.as_pointer()] = (
-                            _ensure_channelbag(merged, datablock=obj))
-                    dst_map[key] = _new_fcurve(
-                        dst_cb, src_fc.data_path, src_fc.array_index,
-                        group_name)
-
-                dst_fc = dst_map[key]
-
-                # Convert action-local frame to timeline frame:
+                # Piece frames start at 0 on the strip's first frame:
                 #   timeline_frame = strip.frame_start + clip shift
-                #                  + (action_frame - action_frame_start) * scale
-                def to_timeline(frame, start=timeline_start,
-                                action_start=act_start, factor=scale):
-                    return start + (frame - action_start) * factor
+                #                  + piece_frame * scale
+                def to_timeline(frame, start=timeline_start, factor=scale):
+                    return start + frame * factor
 
-                src_points = list(src_fc.keyframe_points)
-                for index, src_kp in enumerate(src_points):
-                    # A strip can use only part of its Action. Do not leak
-                    # keys from outside that selected Action range.
-                    if not act_start <= src_kp.co[0] <= act_end:
+                for src_fc in _get_fcurves(piece):
+                    src_points = list(src_fc.keyframe_points)
+                    if not src_points:
                         continue
 
-                    f = to_timeline(src_kp.co[0])
-                    new_kp = dst_fc.keyframe_points.insert(
-                        frame=f, value=src_kp.co[1], options={'FAST'})
-                    _copy_key_shape(src_kp, new_kp)
-                    new_kp.handle_left_type  = src_kp.handle_left_type
-                    new_kp.handle_right_type = src_kp.handle_right_type
-                    new_kp.handle_left  = (to_timeline(src_kp.handle_left[0]),
-                                           src_kp.handle_left[1])
-                    new_kp.handle_right = (to_timeline(src_kp.handle_right[0]),
-                                           src_kp.handle_right[1])
-                    has_any = True
+                    key = (obj.as_pointer(), src_fc.data_path,
+                           src_fc.array_index)
+                    group_name = src_fc.group.name if src_fc.group else ""
 
-                    if (src_kp.handle_left_type in _NEIGHBOR_HANDLE_TYPES
-                            or src_kp.handle_right_type
-                            in _NEIGHBOR_HANDLE_TYPES):
-                        neighbors = [
-                            (to_timeline(point.co[0]), point.co[1])
-                            if point is not None else None
-                            for point in (
-                                src_points[index - 1] if index > 0 else None,
-                                src_points[index + 1]
-                                if index + 1 < len(src_points) else None,
-                            )
-                        ]
-                        neighbor_checks.setdefault(key, []).append((
-                            f, src_kp, to_timeline, neighbors, scale != 1.0))
+                    if key not in dst_map:
+                        dst_cb = dst_bags.get(obj.as_pointer())
+                        if dst_cb is None:
+                            dst_cb = dst_bags[obj.as_pointer()] = (
+                                _ensure_channelbag(merged, datablock=obj))
+                        dst_map[key] = _new_fcurve(
+                            dst_cb, src_fc.data_path, src_fc.array_index,
+                            group_name)
 
-    # Automatic handles follow the neighbouring keys. Where a strip's Action
-    # range or an adjacent strip gives a merged key other neighbours, or the
-    # strip rescales time, pin the handles the key had inside its strip.
-    for key, checks in neighbor_checks.items():
-        points = list(dst_map[key].keyframe_points)
-        frames = [point.co[0] for point in points]
-        for frame, src_kp, to_timeline, neighbors, rescaled in checks:
-            index = bisect_left(frames, frame - 1e-6)
-            if index >= len(points) or abs(frames[index] - frame) > 1e-6:
-                continue
-            merged_neighbors = [
-                tuple(points[index - 1].co) if index > 0 else None,
-                tuple(points[index + 1].co)
-                if index + 1 < len(points) else None,
-            ]
-            if rescaled or not all(
-                    _same_neighbor(a, b)
-                    for a, b in zip(neighbors, merged_neighbors)):
-                _freeze_source_handles(points[index], src_kp, to_timeline)
+                    dst_fc = dst_map[key]
 
-    for fc in dst_map.values():
-        fc.update()
+                    for index, src_kp in enumerate(src_points):
+                        f = to_timeline(src_kp.co[0])
+                        new_kp = dst_fc.keyframe_points.insert(
+                            frame=f, value=src_kp.co[1], options={'FAST'})
+                        _copy_key_shape(src_kp, new_kp)
+                        new_kp.handle_left_type  = src_kp.handle_left_type
+                        new_kp.handle_right_type = src_kp.handle_right_type
+                        new_kp.handle_left  = (
+                            to_timeline(src_kp.handle_left[0]),
+                            src_kp.handle_left[1])
+                        new_kp.handle_right = (
+                            to_timeline(src_kp.handle_right[0]),
+                            src_kp.handle_right[1])
+                        has_any = True
+
+                        if (src_kp.handle_left_type in _NEIGHBOR_HANDLE_TYPES
+                                or src_kp.handle_right_type
+                                in _NEIGHBOR_HANDLE_TYPES):
+                            neighbors = [
+                                (to_timeline(point.co[0]), point.co[1])
+                                if point is not None else None
+                                for point in (
+                                    src_points[index - 1]
+                                    if index > 0 else None,
+                                    src_points[index + 1]
+                                    if index + 1 < len(src_points) else None,
+                                )
+                            ]
+                            neighbor_checks.setdefault(key, []).append((
+                                f, src_kp, to_timeline, neighbors,
+                                scale != 1.0))
+
+                    # The strip ends on this key. Hold it until the next clip
+                    # starts rather than easing across the clip boundary.
+                    new_kp.interpolation = 'CONSTANT'
+
+        # Automatic handles follow the neighbouring keys. Where an adjacent
+        # clip gives a merged key other neighbours, or the strip rescales
+        # time, pin the handles the key had inside its strip.
+        for key, checks in neighbor_checks.items():
+            points = list(dst_map[key].keyframe_points)
+            frames = [point.co[0] for point in points]
+            for frame, src_kp, to_timeline, neighbors, rescaled in checks:
+                index = bisect_left(frames, frame - 1e-6)
+                if index >= len(points) or abs(frames[index] - frame) > 1e-6:
+                    continue
+                merged_neighbors = [
+                    tuple(points[index - 1].co) if index > 0 else None,
+                    tuple(points[index + 1].co)
+                    if index + 1 < len(points) else None,
+                ]
+                if rescaled or not all(
+                        _same_neighbor(a, b)
+                        for a, b in zip(neighbors, merged_neighbors)):
+                    _freeze_source_handles(points[index], src_kp, to_timeline)
+
+        for fc in dst_map.values():
+            fc.update()
+    finally:
+        for piece in pieces:
+            bpy.data.actions.remove(piece)
 
     if not has_any:
         bpy.data.actions.remove(merged)
