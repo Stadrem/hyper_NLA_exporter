@@ -210,6 +210,7 @@ def collect_export_issues(context, export_format='FBX',
             "multiple active Actions produce incomplete Blender FBX takes",
         ))
 
+    keyless_by_clip = {seg['name']: [] for seg in segments}
     for obj in targets:
         anim = obj.animation_data
         action = anim.action
@@ -240,10 +241,28 @@ def collect_export_issues(context, export_format='FBX',
                 for point in fcurve.keyframe_points
             )
             if not has_key:
-                issues.append((
-                    'WARNING',
-                    f"{obj.name} / {seg['name']}: no keys inside clip range",
-                ))
+                keyless_by_clip[seg['name']].append(obj.name)
+
+    # Objects that move in some clips and rest in others are normal. With
+    # boundary keys the rest pose is still written into the clip, so this
+    # is information; without them the object is left out of the clip.
+    for clip_name, names in keyless_by_clip.items():
+        if not names:
+            continue
+        listed = ", ".join(names[:3]) + (", …" if len(names) > 3 else "")
+        if scene.m2nla_boundary_keys:
+            issues.append((
+                'INFO',
+                f"{clip_name}: {len(names)} object(s) without keys hold "
+                f"their pose ({listed})",
+            ))
+        else:
+            issues.append((
+                'WARNING',
+                f"{clip_name}: {len(names)} object(s) without keys are left "
+                f"out of this clip ({listed}); enable Create Boundary Keys "
+                "to hold their pose",
+            ))
 
     if scene.m2nla_selected_only and targets:
         included = set(scoped_objects)

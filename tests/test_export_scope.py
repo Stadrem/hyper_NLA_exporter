@@ -43,6 +43,54 @@ def check_glb(path, expected_objects):
             assert abs(values[-1][0] - expected[1]) < 1e-5, values
 
 
+def check_keyless_clips(directory):
+    """Objects resting in a clip are summarized once per clip.
+
+    A rig-less scene keys Empties that each move in only some clips. With
+    boundary keys the resting Empty still holds its pose in the clip, so
+    preflight reports it as information instead of one warning per object.
+    """
+    scene = bpy.context.scene
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    movers = [make_object(f'Mover{index}') for index in range(4)]
+    resting = []
+    for index in range(4):
+        obj = bpy.data.objects.new(f'Rest{index}', None)
+        bpy.context.scene.collection.objects.link(obj)
+        for frame in (1, 10):  # Keys inside Walk only.
+            obj.keyframe_insert('location', index=0, frame=frame)
+        resting.append(obj)
+    for obj in movers + resting:
+        obj.select_set(True)
+
+    def keyless_issues():
+        return [(level, text) for level, text
+                in addon.collect_export_issues(bpy.context, 'GLB')
+                if 'without keys' in text]
+
+    scene.m2nla_boundary_keys = True
+    issues = keyless_issues()
+    assert len(issues) == 1, issues
+    level, text = issues[0]
+    assert level == 'INFO' and text.startswith('Run: 4 object(s)'), issues
+    assert text.endswith(', …)'), text  # Long lists are shortened.
+
+    path = Path(directory) / 'keyless.glb'
+    assert bpy.ops.markernla.quick_export_glb(filepath=str(path)) == {'FINISHED'}
+    document, _binary = read_glb(path)
+    run = next(a for a in document['animations'] if a['name'] == 'Run')
+    animated = {document['nodes'][c['target']['node']]['name']
+                for c in run['channels']}
+    assert {obj.name for obj in resting} <= animated, animated
+
+    scene.m2nla_boundary_keys = False
+    issues = keyless_issues()
+    assert len(issues) == 1 and issues[0][0] == 'WARNING', issues
+    assert 'left out of this clip' in issues[0][1], issues
+    scene.m2nla_boundary_keys = True
+
+
 def main():
     addon.register()
     scene = bpy.context.scene
@@ -82,6 +130,7 @@ def main():
         assert set(bpy.context.selected_objects) == {parent}
         assert not any(level == 'ERROR' for level, _ in
                        addon.collect_export_issues(bpy.context, 'FBX'))
+        check_keyless_clips(directory)
     addon.unregister()
     print('HYPER_NLA_EXPORT_SCOPE_TESTS_OK')
 

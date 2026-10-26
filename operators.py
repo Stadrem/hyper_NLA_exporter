@@ -80,7 +80,8 @@ class MARKERNLA_OT_validate_export(Operator):
             if issues:
                 layout.label(text="Preflight", icon='VIEWZOOM')
                 for severity, message in issues:
-                    icon = 'CANCEL' if severity == 'ERROR' else 'ERROR'
+                    icon = {'ERROR': 'CANCEL', 'INFO': 'INFO'}.get(
+                        severity, 'ERROR')
                     row = layout.row()
                     row.alert = severity == 'ERROR'
                     row.label(text=message, icon=icon)

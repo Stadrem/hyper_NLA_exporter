@@ -82,7 +82,7 @@
   * *GLB Draco Compression*: GLB 메시를 Draco(`KHR_draco_mesh_compression`)로 압축하고, 압축 레벨과 양자화 비트를 조절할 수 있습니다. 모든 GLB 내보내기(Quick Export, 기존 NLA 내보내기)에 적용되며 FBX에는 영향이 없습니다. 불러오는 엔진에 Draco 디코더가 있어야 합니다(예: Unity의 glTFast + Draco 패키지). Blender의 Draco 라이브러리가 없으면 경고와 함께 압축 없이 내보냅니다.
 * **Quick Export (Marker Split)**:
   * 버튼 아래의 형식 안내는 현재 범위에 애니메이션 대상이 여러 개 있을 때 빨간색 경고로 바뀝니다. FBX는 애니메이션 리그 하나만 지원하고 GLB는 다중 리그 씬을 지원합니다.
-  * *Check FBX / Check GLB*: 임시 NLA 분할을 실제로 수행한 뒤 예상/생성 트랙 수와 모든 클립의 오브젝트별 `✓`, `⚠`, `✗` 결과를 팝업으로 표시합니다. Action/Strip 내용, 이름, 프레임 범위, Action Slot, 키프레임 및 내보내기 계층을 검사하고 임시 데이터는 즉시 제거합니다. 하드 오류는 Quick Export도 차단합니다.
+  * *Check FBX / Check GLB*: 임시 NLA 분할을 실제로 수행한 뒤 예상/생성 트랙 수와 모든 클립의 오브젝트별 `✓`, `⚠`, `✗` 결과를 팝업으로 표시합니다. Action/Strip 내용, 이름, 프레임 범위, Action Slot, 키프레임 및 내보내기 계층을 검사하고 임시 데이터는 즉시 제거합니다. 하드 오류는 Quick Export도 차단합니다. 클립 구간 안에 키가 없는 오브젝트(예: 일부 클립에서만 움직이는 Empty)는 클립마다 한 줄로 요약합니다. Create Boundary Keys가 켜져 있으면 자세를 유지하므로 정보로, 꺼져 있으면 해당 오브젝트가 그 클립에서 빠지므로 경고로 표시합니다.
   * *FBX*: 활성 Action을 가진 애니메이션 오브젝트 하나를 마커별 Take로 나누어 단일 `.fbx` 파일로 내보냅니다. 애니메이션 리그와 Action이 없는 메시 계층은 함께 선택할 수 있지만, 활성 Action을 가진 오브젝트가 여러 개면 Blender FBX exporter가 같은 이름의 Take를 안전하게 합치지 못하므로 내보내기를 차단합니다.
   * *GLB*: 여러 애니메이션 리그가 포함된 씬도 마커별 클립으로 나누어 단일 `.glb` 파일로 내보냅니다.
 * **Manual NLA Tools (수동 도구 foldout)**: 마커 $\rightarrow$ NLA 영구 변환, NLA $\rightarrow$ Action 통합 액션 복구, 기존 NLA 수동 내보내기 및 트랙 전체 삭제 도구를 담고 있습니다.
