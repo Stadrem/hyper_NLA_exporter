@@ -79,6 +79,7 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
   * *Create Boundary Keys*: Evaluates curve endpoints and keys missing frames to prevent pose drift. With it off, every FBX/GLB clip still spans its full marker segment; curves hold their first/last key value up to the clip edges.
   * *Selected Only*: Processes only the active selection. For Quick Export, all descendants of the selected objects are temporarily included so the skinned hierarchy remains complete in both FBX and GLB.
   * *Open Folder After Export*: Opens the exported file's containing folder after a successful export.
+  * *GLB Draco Compression*: Compresses GLB meshes with Draco (`KHR_draco_mesh_compression`) and exposes the compression level and quantization bits. Applies to every GLB export (Quick Export and Export existing NLA); FBX is unaffected. The target engine needs a Draco decoder (e.g. glTFast with the Draco package in Unity). If Blender's Draco library is missing, the GLB is exported uncompressed with a warning.
 * **Quick Export (Marker Split)**:
   * The format note below the buttons warns in red when the current export scope contains multiple animated targets. FBX supports one animated rig; GLB supports multi-rig scenes.
   * *Check FBX / Check GLB*: Performs a temporary NLA split and shows expected/created track counts plus per-object `✓`, `⚠`, or `✗` results for every clip. It validates Action/Strip content, names, frame ranges, Action Slots, keyframes, and hierarchy, then removes all temporary data. Hard errors also block Quick Export.

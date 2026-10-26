@@ -129,6 +129,20 @@ class MARKERNLA_PT_panel(Panel):
         col.prop(scene, "m2nla_selected_only")
         col.prop(scene, "m2nla_open_folder")
 
+        # GLB only: the FBX exporter has no Draco support.
+        sub = box.box()
+        sub.prop(scene, "m2nla_draco_enable", text="GLB Draco Compression")
+        if scene.m2nla_draco_enable:
+            col = sub.column(align=True)
+            col.prop(scene, "m2nla_draco_level")
+            col.separator()
+            col.label(text="Quantization Bits:")
+            col.prop(scene, "m2nla_draco_position_bits", text="Position")
+            col.prop(scene, "m2nla_draco_normal_bits", text="Normal")
+            col.prop(scene, "m2nla_draco_texcoord_bits", text="Tex Coord")
+            col.prop(scene, "m2nla_draco_color_bits", text="Color")
+            col.prop(scene, "m2nla_draco_generic_bits", text="Generic")
+
         layout.separator()
 
         # ── Quick Export (main feature) ──────────────────────

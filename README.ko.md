@@ -79,6 +79,7 @@
   * *Create Boundary Keys*: 활성화 시 F-Curve의 프레임 경계 구간에 키프레임을 삽입하여 프레임 유실로 인한 자세 흐트러짐을 방지합니다. 꺼져 있어도 FBX/GLB 클립은 마커 구간 전체 길이를 유지하며, 곡선은 클립 양 끝까지 첫/마지막 키 값을 유지합니다.
   * *Selected Only*: 체크 시 선택된 오브젝트만 추출 대상으로 삼습니다. 퀵 익스포트에서는 스킨드 메시 계층이 빠지지 않도록 선택된 오브젝트의 모든 하위 오브젝트도 임시로 포함하며, FBX와 GLB에 모두 적용됩니다.
   * *Open Folder After Export*: 내보내기에 성공하면 결과 파일이 있는 폴더를 엽니다.
+  * *GLB Draco Compression*: GLB 메시를 Draco(`KHR_draco_mesh_compression`)로 압축하고, 압축 레벨과 양자화 비트를 조절할 수 있습니다. 모든 GLB 내보내기(Quick Export, 기존 NLA 내보내기)에 적용되며 FBX에는 영향이 없습니다. 불러오는 엔진에 Draco 디코더가 있어야 합니다(예: Unity의 glTFast + Draco 패키지). Blender의 Draco 라이브러리가 없으면 경고와 함께 압축 없이 내보냅니다.
 * **Quick Export (Marker Split)**:
   * 버튼 아래의 형식 안내는 현재 범위에 애니메이션 대상이 여러 개 있을 때 빨간색 경고로 바뀝니다. FBX는 애니메이션 리그 하나만 지원하고 GLB는 다중 리그 씬을 지원합니다.
   * *Check FBX / Check GLB*: 임시 NLA 분할을 실제로 수행한 뒤 예상/생성 트랙 수와 모든 클립의 오브젝트별 `✓`, `⚠`, `✗` 결과를 팝업으로 표시합니다. Action/Strip 내용, 이름, 프레임 범위, Action Slot, 키프레임 및 내보내기 계층을 검사하고 임시 데이터는 즉시 제거합니다. 하드 오류는 Quick Export도 차단합니다.

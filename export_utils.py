@@ -370,6 +370,42 @@ def _run_fbx_export(operator, scene):
     return _run_staged_export(operator, "FBX", export)
 
 
+def _draco_available():
+    """Return whether the bundled glTF exporter can load its Draco library."""
+    try:
+        from io_scene_gltf2 import is_draco_available
+    except ImportError:
+        return False
+    return is_draco_available()
+
+
+def _draco_kwargs(operator, scene):
+    """Return glTF exporter Draco options for the scene's settings.
+
+    The glTF exporter silently drops compression when its Draco library is
+    missing, so warn instead of letting an uncompressed file pass as done.
+    """
+    if not scene.m2nla_draco_enable:
+        return {}
+    if not _draco_available():
+        operator.report(
+            {'WARNING'},
+            "Draco library not found: GLB exported without compression",
+        )
+        return {}
+    return {
+        'export_draco_mesh_compression_enable': True,
+        'export_draco_mesh_compression_level': scene.m2nla_draco_level,
+        'export_draco_position_quantization':
+            scene.m2nla_draco_position_bits,
+        'export_draco_normal_quantization': scene.m2nla_draco_normal_bits,
+        'export_draco_texcoord_quantization':
+            scene.m2nla_draco_texcoord_bits,
+        'export_draco_color_quantization': scene.m2nla_draco_color_bits,
+        'export_draco_generic_quantization': scene.m2nla_draco_generic_bits,
+    }
+
+
 def _run_glb_export(operator, scene, marker_actions=False):
     """Run GLB export for marker Actions or existing NLA tracks."""
     kwargs = {
@@ -389,6 +425,7 @@ def _run_glb_export(operator, scene, marker_actions=False):
         })
     else:
         kwargs['export_animation_mode'] = 'NLA_TRACKS'
+    kwargs.update(_draco_kwargs(operator, scene))
 
     def export(filepath):
         try:

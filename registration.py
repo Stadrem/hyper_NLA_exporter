@@ -50,7 +50,23 @@ _scene_props = (
     "m2nla_open_folder",
     "m2nla_auto_export",
     "m2nla_export_path",
+    "m2nla_draco_enable",
+    "m2nla_draco_level",
+    "m2nla_draco_position_bits",
+    "m2nla_draco_normal_bits",
+    "m2nla_draco_texcoord_bits",
+    "m2nla_draco_color_bits",
+    "m2nla_draco_generic_bits",
     "m2nla_ui_state",
+)
+
+# (property suffix, label, glTF default) for Draco quantization bits.
+_draco_quantization = (
+    ("position", "Position", 14),
+    ("normal", "Normal", 10),
+    ("texcoord", "Tex Coord", 12),
+    ("color", "Color", 10),
+    ("generic", "Generic", 12),
 )
 
 
@@ -162,6 +178,35 @@ def register():
         subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},
     )
+    S.m2nla_draco_enable = BoolProperty(
+        name="Draco Compression",
+        description=(
+            "Compress GLB meshes with Draco (KHR_draco_mesh_compression). "
+            "The target engine needs a Draco decoder to load the file"
+        ),
+        default=False,
+    )
+    S.m2nla_draco_level = IntProperty(
+        name="Compression Level",
+        description=(
+            "Draco compression level (0 = fastest, 6 = smallest; higher "
+            "values are currently not supported by the encoder)"
+        ),
+        default=6,
+        min=0,
+        max=10,
+    )
+    for suffix, label, default in _draco_quantization:
+        setattr(S, f"m2nla_draco_{suffix}_bits", IntProperty(
+            name=f"{label} Bits",
+            description=(
+                f"Draco quantization bits for {label.lower()} values "
+                "(0 = no quantization)"
+            ),
+            default=default,
+            min=0,
+            max=30,
+        ))
     # During addon enable Blender can expose _RestrictData, which does not
     # provide scene collections. Existing scenes are optional migration only.
     for scene in getattr(bpy.data, "scenes", ()):
