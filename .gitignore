@@ -34,6 +34,7 @@ share/python-wheels/
 *.fbx
 ADDON_EVALUATION.ko.md
 MANIFEST
+.review/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -148,6 +148,9 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
    * Converted strips use Extrapolation **Nothing**, so each track only plays inside its own clip and never covers the clips on the tracks below with its first pose.
    * NLA strip names are unique per object. When Clear Existing NLA removes an old strip named like a clip, the new strip takes the clip name back; kept strips with that name force a `.001` suffix, which the operator reports. Quick Export temporarily renames such existing strips so its clips always carry the marker names.
    * Convert, merge, and cleanup protect hand-authored Actions with a Fake User before removing their references, so they survive saving and reopening. Generated Actions are released when no longer needed.
+10. **NLA evaluation and constraints**:
+   * Quick Export turns NLA evaluation on for each split object while it exports and restores the setting afterwards, so an object whose NLA evaluation is switched off still exports its motion in FBX.
+   * Quick GLB samples each object's clip separately, so a constraint that follows **another animated object** (Copy Location, Child Of, an IK target on a different object, …) exports wrong motion, or none for a constraint-only follower. Preflight warns about these pairs. Bake the follower first with **Object > Animation > Bake Action** using *Visual Keying* and *Clear Constraints*. Constraints between bones of the same armature are not affected.
 
 ---
 

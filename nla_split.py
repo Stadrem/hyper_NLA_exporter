@@ -193,6 +193,7 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
             'anim': anim,
             'original_action': anim.action,
             'original_slot': getattr(anim, 'action_slot', None),
+            'use_nla': anim.use_nla,
             'temp_tracks': [],
             'temp_actions': [],
         })
@@ -247,6 +248,10 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
             obj = state['obj']
             original_action = state['original_action']
             original_slot = state['original_slot']
+            # The FBX exporter samples the temporary tracks. With NLA
+            # evaluation off they are ignored and every take came out as a
+            # still pose, while the export still reported success.
+            state['anim'].use_nla = True
 
             object_result = {
                 'name': obj.name,
@@ -349,6 +354,7 @@ def _temporary_nla_split(objects, scene, include_shape_keys=True):
                     anim.action_slot = state['original_slot']
                 except Exception:
                     pass
+            anim.use_nla = state['use_nla']
 
         # The temporary strips are gone, so parked names are free again.
         for nla_state in nla_states:

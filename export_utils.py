@@ -101,6 +101,36 @@ def _temporary_descendant_selection(context):
                 pass
 
 
+def _constraint_targets(constraint):
+    """Objects an enabled constraint reads its transform from."""
+    if (not getattr(constraint, 'enabled', True)
+            or getattr(constraint, 'influence', 1.0) == 0.0):
+        return []
+    targets = [getattr(constraint, 'target', None)]
+    # The Armature constraint keeps a list of bone targets instead.
+    targets += [entry.target for entry in getattr(constraint, 'targets', ())]
+    return [target for target in targets if target is not None]
+
+
+def _cross_object_constraints(objects, animated):
+    """Return ``(follower, target)`` pairs that follow another animated object.
+
+    Bone constraints count too; a bone following its own armature does not.
+    """
+    pairs = []
+    for obj in objects:
+        constraints = list(obj.constraints)
+        pose = getattr(obj, 'pose', None)
+        if pose is not None:
+            for bone in pose.bones:
+                constraints.extend(bone.constraints)
+        for constraint in constraints:
+            for target in _constraint_targets(constraint):
+                if target != obj and target in animated:
+                    pairs.append((obj, target))
+    return pairs
+
+
 def collect_export_issues(context, export_format='FBX',
                           allow_multiple_fbx_targets=False):
     """Return preflight issues as ``(severity, message)`` tuples."""
@@ -262,6 +292,25 @@ def collect_export_issues(context, export_format='FBX',
                 f"{clip_name}: {len(names)} object(s) without keys are left "
                 f"out of this clip ({listed}); enable Create Boundary Keys "
                 "to hold their pose",
+            ))
+
+    # The glTF exporter samples each object's clip separately, so a follower
+    # never sees its target at the same moment of the same clip. The GLB
+    # stores wrong motion or none, so make the user bake it first.
+    if export_format == 'GLB' and object_targets:
+        pairs = _cross_object_constraints(
+            scoped_objects, _with_descendants(object_targets))
+        if pairs:
+            listed = ", ".join(f"{follower.name} → {target.name}"
+                               for follower, target in pairs[:3])
+            if len(pairs) > 3:
+                listed += ", …"
+            issues.append((
+                'WARNING',
+                "Constraints following another animated object export "
+                f"incorrectly in GLB ({listed}); bake them first with "
+                "Object > Animation > Bake Action (Visual Keying, "
+                "Clear Constraints)",
             ))
 
     if scene.m2nla_selected_only and targets:

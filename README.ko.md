@@ -148,6 +148,9 @@
    * 변환된 Strip의 Extrapolation은 **Nothing**이므로 각 트랙은 자기 클립 구간에서만 재생되고, 첫 포즈로 아래 트랙의 클립을 가리지 않습니다.
    * NLA Strip 이름은 오브젝트마다 고유해야 합니다. Clear Existing NLA가 클립과 같은 이름의 기존 Strip을 지우면 새 Strip이 클립 이름을 되찾고, 같은 이름의 Strip을 남겨 두면 새 Strip에 `.001`이 붙으며 이를 경고로 알립니다. Quick Export는 이런 기존 Strip의 이름을 잠시 바꿔 두므로 클립 이름은 항상 마커 이름과 같습니다.
    * 변환·병합·Cleanup은 직접 만든 Action의 연결을 제거하기 전에 Fake User를 지정하므로 저장 후 다시 열어도 남습니다. 애드온이 생성한 Action은 더 이상 사용하지 않을 때 해제합니다.
+10. **NLA 평가와 Constraint**:
+   * Quick Export는 내보내는 동안 분할 대상 오브젝트의 NLA 평가를 켜고, 끝나면 원래 설정으로 되돌립니다. 따라서 NLA 평가를 꺼 둔 오브젝트도 FBX에 움직임이 기록됩니다.
+   * Quick GLB는 오브젝트마다 클립을 따로 샘플링하므로 **다른 애니메이션 오브젝트**를 따라가는 Constraint(Copy Location, Child Of, 다른 오브젝트를 IK 타깃으로 쓰는 경우 등)는 잘못된 움직임으로 기록되고, Constraint만 있는 오브젝트는 애니메이션이 빠집니다. Preflight가 해당 조합을 경고합니다. 먼저 **Object > Animation > Bake Action**에서 *Visual Keying*과 *Clear Constraints*를 켜고 따라가는 오브젝트를 베이크하세요. 같은 아마추어 안의 본끼리 거는 Constraint는 영향이 없습니다.
 
 
 
