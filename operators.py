@@ -33,6 +33,86 @@ from .nla_split import _build_nla_track_for_segment, _temporary_nla_split
 #  Operators  – Quick Export (main workflow)
 # ============================================================
 
+# A popup menu taller than the window flows into extra columns, so long
+# preflight lists are capped and fully OK objects collapse into one line.
+_POPUP_ISSUE_LIMIT = 12
+_POPUP_OBJECT_LIMIT = 6
+
+
+def _draw_preflight(layout, issues, split_result, static_errors):
+    """Draw the preflight popup: issues first, then the split dry run."""
+    if issues:
+        layout.label(text="Preflight", icon='VIEWZOOM')
+        for severity, message in issues[:_POPUP_ISSUE_LIMIT]:
+            icon = {'ERROR': 'CANCEL', 'INFO': 'INFO'}.get(severity, 'ERROR')
+            row = layout.row()
+            row.alert = severity == 'ERROR'
+            row.label(text=message, icon=icon)
+        hidden = len(issues) - _POPUP_ISSUE_LIMIT
+        if hidden > 0:
+            layout.label(
+                text=f"… {hidden} more (full list in System Console)",
+                icon='BLANK1')
+
+    if split_result is not None:
+        if issues:
+            layout.separator()
+        actual = split_result['actual_track_count']
+        expected = split_result['expected_track_count']
+        layout.label(
+            text=f"NLA Split Dry Run — {actual}/{expected} tracks",
+            icon='CHECKMARK' if actual == expected else 'ERROR',
+        )
+        objects = split_result['objects']
+        flagged = [result for result in objects
+                   if any(clip['severity'] != 'OK'
+                          for clip in result['clips'])]
+        ok_count = len(objects) - len(flagged)
+        if ok_count:
+            clip_count = len(split_result['expected_clip_names'])
+            layout.label(
+                text=(f"{ok_count} object(s): all {clip_count} clip(s) "
+                      "Track/Strip OK"),
+                icon='CHECKMARK',
+            )
+        for object_result in flagged[:_POPUP_OBJECT_LIMIT]:
+            box = layout.box()
+            box.label(
+                text=(
+                    f"{object_result['name']} — "
+                    f"{object_result['actual_track_count']}/"
+                    f"{object_result['expected_track_count']} tracks"
+                ),
+                icon='OBJECT_DATA',
+            )
+            for clip in object_result['clips']:
+                severity = clip['severity']
+                if severity == 'OK':
+                    continue
+                symbol = '⚠' if severity == 'WARNING' else '✗'
+                row = box.row()
+                row.alert = severity == 'ERROR'
+                row.label(
+                    text=f"{clip['name']}  {symbol}  {clip['message']}",
+                    icon='ERROR' if severity == 'WARNING' else 'CANCEL',
+                )
+        hidden = len(flagged) - _POPUP_OBJECT_LIMIT
+        if hidden > 0:
+            layout.label(text=(f"… {hidden} more object(s) with issues "
+                               "(full list in System Console)"),
+                         icon='BLANK1')
+    elif not issues:
+        layout.label(
+            text="Ready to export — no issues found",
+            icon='CHECKMARK',
+        )
+    elif static_errors:
+        layout.separator()
+        layout.label(
+            text="NLA split dry run skipped until errors are fixed",
+            icon='INFO',
+        )
+
 class MARKERNLA_OT_validate_export(Operator):
     """Validate marker clips and export targets before Quick Export"""
     bl_idname = "markernla.validate_export"
@@ -76,64 +156,15 @@ class MARKERNLA_OT_validate_export(Operator):
                             for severity, _message in issues)
 
         def draw_popup(menu, _context):
-            layout = menu.layout
-            if issues:
-                layout.label(text="Preflight", icon='VIEWZOOM')
-                for severity, message in issues:
-                    icon = {'ERROR': 'CANCEL', 'INFO': 'INFO'}.get(
-                        severity, 'ERROR')
-                    row = layout.row()
-                    row.alert = severity == 'ERROR'
-                    row.label(text=message, icon=icon)
-
-            if split_result is not None:
-                if issues:
-                    layout.separator()
-                actual = split_result['actual_track_count']
-                expected = split_result['expected_track_count']
-                summary_icon = ('CHECKMARK' if actual == expected
-                                else 'ERROR')
-                layout.label(
-                    text=f"NLA Split Dry Run — {actual}/{expected} tracks",
-                    icon=summary_icon,
-                )
-                for object_result in split_result['objects']:
-                    box = layout.box()
-                    box.label(
-                        text=(
-                            f"{object_result['name']} — "
-                            f"{object_result['actual_track_count']}/"
-                            f"{object_result['expected_track_count']} tracks"
-                        ),
-                        icon='OBJECT_DATA',
-                    )
-                    for clip in object_result['clips']:
-                        severity = clip['severity']
-                        symbol = {'OK': '✓', 'WARNING': '⚠'}.get(
-                            severity, '✗')
-                        icon = {'OK': 'CHECKMARK', 'WARNING': 'ERROR'}.get(
-                            severity, 'CANCEL')
-                        row = box.row()
-                        row.alert = severity == 'ERROR'
-                        row.label(
-                            text=(f"{clip['name']}  {symbol}  "
-                                  f"{clip['message']}"),
-                            icon=icon,
-                        )
-            elif not issues:
-                layout.label(
-                    text="Ready to export — no issues found",
-                    icon='CHECKMARK',
-                )
-            elif static_errors:
-                layout.separator()
-                layout.label(
-                    text="NLA split dry run skipped until errors are fixed",
-                    icon='INFO',
-                )
+            _draw_preflight(menu.layout, issues, split_result, static_errors)
 
         title = (f"{self.export_format} Preflight — "
                  f"{error_count} errors, {warning_count} warnings")
+        # The popup caps long lists; the System Console keeps all of them.
+        if issues:
+            print(title)
+            for severity, message in issues:
+                print(f"  [{severity}] {message}")
         # Blender can crash when popup_menu is requested in --background
         # mode. Interactive sessions still get the full issue list popup.
         if not bpy.app.background:

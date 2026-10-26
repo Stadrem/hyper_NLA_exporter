@@ -9,7 +9,11 @@ import bpy
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hyper_NLA_exporter as addon
-from hyper_NLA_exporter.export_utils import _get_quick_export_targets
+from hyper_NLA_exporter.export_utils import (
+    _get_export_scope, _get_quick_export_targets,
+)
+from hyper_NLA_exporter.nla_split import _temporary_nla_split
+from hyper_NLA_exporter.operators import _POPUP_OBJECT_LIMIT, _draw_preflight
 from test_blender_exports import read_glb, read_accessor
 
 
@@ -41,6 +45,60 @@ def check_glb(path, expected_objects):
             expected = (0, 9) if name == 'Walk' else (100, 109)
             assert abs(values[0][0] - expected[0]) < 1e-5, values
             assert abs(values[-1][0] - expected[1]) < 1e-5, values
+
+
+class FakeLayout:
+    """Record what the preflight popup draws."""
+
+    def __init__(self, root=None):
+        self.root = root or self
+        if root is None:
+            self.labels = []
+            self.boxes = []
+        self.alert = False
+
+    def label(self, text="", icon='NONE'):
+        self.root.labels.append(text)
+
+    def row(self):
+        return FakeLayout(self.root)
+
+    def box(self):
+        box = FakeLayout(self.root)
+        self.root.boxes.append(box)
+        return box
+
+    def separator(self):
+        pass
+
+
+def check_popup_caps_flagged_objects():
+    """Only objects with problems get a box, and only a few of them."""
+    clips = [{'name': name, 'severity': 'OK', 'message': 'Track/Strip OK'}
+             for name in ('Walk', 'Run')]
+    objects = []
+    for index in range(10):
+        broken = dict(clips[1], severity='WARNING',
+                      message='track was not created')
+        objects.append({'name': f'Broken{index}', 'actual_track_count': 1,
+                        'expected_track_count': 2,
+                        'clips': [dict(clips[0]), broken]})
+    objects += [{'name': f'Fine{index}', 'actual_track_count': 2,
+                 'expected_track_count': 2,
+                 'clips': [dict(clip) for clip in clips]}
+                for index in range(20)]
+    split_result = {'actual_track_count': 50, 'expected_track_count': 60,
+                    'expected_clip_names': ['Walk', 'Run'],
+                    'objects': objects}
+    issues = [('WARNING', f'issue {index}') for index in range(30)]
+    layout = FakeLayout()
+    _draw_preflight(layout, issues, split_result, [])
+    assert len(layout.boxes) == _POPUP_OBJECT_LIMIT, len(layout.boxes)
+    assert '20 object(s): all 2 clip(s) Track/Strip OK' in layout.labels
+    assert any(text.startswith('… 18 more') for text in layout.labels)
+    assert any(text.startswith('… 4 more object(s)') for text in layout.labels)
+    # OK clips of a flagged object are left out of its box.
+    assert not any('Walk' in text for text in layout.labels), layout.labels
 
 
 def check_keyless_clips(directory):
@@ -83,6 +141,17 @@ def check_keyless_clips(directory):
     animated = {document['nodes'][c['target']['node']]['name']
                 for c in run['channels']}
     assert {obj.name for obj in resting} <= animated, animated
+
+    # Every object is OK, so the dry run collapses into one line instead of
+    # one box per object (a tall popup flows into staircase columns).
+    with _temporary_nla_split(_get_export_scope(bpy.context),
+                              scene) as split_result:
+        split_issues = addon.collect_split_issues(split_result)
+        layout = FakeLayout()
+        _draw_preflight(layout, issues + split_issues, split_result, [])
+    assert not layout.boxes, layout.labels
+    assert '8 object(s): all 2 clip(s) Track/Strip OK' in layout.labels, (
+        layout.labels)
 
     scene.m2nla_boundary_keys = False
     issues = keyless_issues()
@@ -131,6 +200,7 @@ def main():
         assert not any(level == 'ERROR' for level, _ in
                        addon.collect_export_issues(bpy.context, 'FBX'))
         check_keyless_clips(directory)
+    check_popup_caps_flagged_objects()
     addon.unregister()
     print('HYPER_NLA_EXPORT_SCOPE_TESTS_OK')
 
