@@ -36,7 +36,7 @@ $OptionalFixtures = @(
     [pscustomobject]@{ Name = "Real Rig NLA"; File = "NextStep_Arrow_NLA.blend" }
 )
 
-foreach ($Regression in @("manual_safety", "curve_preservation", "export_scope", "shape_keys", "p0_regressions", "merge_clips")) {
+foreach ($Regression in @("manual_safety", "curve_preservation", "export_scope", "shape_keys", "p0_regressions", "merge_clips", "gltf_interpolation")) {
     $Cases += [pscustomobject]@{
         Name = $Regression
         Arguments = @(

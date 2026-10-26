@@ -11,6 +11,7 @@ from .action_utils import (
     _preserve_static_transforms,
     copy_segment_to_action,
     mark_generated_action,
+    unify_flat_interpolation,
 )
 from .clips import get_marker_segments
 
@@ -99,6 +100,7 @@ def _build_nla_track_for_segment(obj, source_action, source_slot, segment,
                 source_action,
                 source_slot=source_slot,
             )
+        unify_flat_interpolation(action)
 
         if not did_copy and not _get_fcurves(action):
             action.use_fake_user = False

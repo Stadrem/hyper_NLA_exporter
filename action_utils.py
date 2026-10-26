@@ -535,6 +535,78 @@ def copy_segment_to_action(source_action, dst_action, start, end,
     return has_any
 
 
+# Interpolations a glTF sampler can store without baking.
+_GLTF_INTERPOLATIONS = {'CONSTANT', 'LINEAR', 'BEZIER'}
+
+
+def _is_flat_span(point_a, point_b, epsilon=1e-6):
+    """Whether the interval from *point_a* to *point_b* holds one value.
+
+    Between two equal values every interpolation, easing included, stays
+    on that value; only a Bezier with sloped handles can leave it.
+    """
+    value = point_a.co[1]
+    tolerance = epsilon * max(1.0, abs(value))
+    if abs(point_b.co[1] - value) > tolerance:
+        return False
+    if point_a.interpolation != 'BEZIER':
+        return True
+    return (abs(point_a.handle_right[1] - value) <= tolerance
+            and abs(point_b.handle_left[1] - value) <= tolerance)
+
+
+def unify_flat_interpolation(action):
+    """Give each property one interpolation where only holds differ.
+
+    The glTF exporter bakes a whole property (every array index of one data
+    path) as soon as two of its keys name different interpolations, and logs
+    a warning each time. Clip copies routinely mix them without changing
+    the motion: holds before the first and after the last key are CONSTANT,
+    boundary keys are inserted as BEZIER, and the last key's interpolation
+    is never evaluated. Hold intervals and last keys take the interpolation
+    of the moving intervals, so an unchanged curve exports unbaked. A
+    property whose moving intervals already disagree is left as it is.
+    """
+    groups = {}
+    for fcurve in _get_fcurves(action):
+        groups.setdefault(fcurve.data_path, []).append(fcurve)
+
+    for fcurves in groups.values():
+        flat_spans = []
+        moving = set()
+        for fcurve in fcurves:
+            points = list(fcurve.keyframe_points)
+            for point_a, point_b in zip(points, points[1:]):
+                if _is_flat_span(point_a, point_b):
+                    flat_spans.append((point_a, point_b))
+                else:
+                    moving.add(point_a.interpolation)
+        if len(moving) > 1:
+            continue
+        target = moving.pop() if moving else 'LINEAR'
+        if target not in _GLTF_INTERPOLATIONS:
+            continue  # The exporter bakes easing anyway.
+
+        for point_a, point_b in flat_spans:
+            point_a.interpolation = target
+            if target == 'BEZIER':
+                # FREE keeps the handles on the far sides where they are.
+                for point in (point_a, point_b):
+                    left, right = tuple(point.handle_left), tuple(
+                        point.handle_right)
+                    point.handle_left_type = 'FREE'
+                    point.handle_right_type = 'FREE'
+                    point.handle_left = left
+                    point.handle_right = right
+                value = point_a.co[1]
+                point_a.handle_right = (point_a.handle_right[0], value)
+                point_b.handle_left = (point_b.handle_left[0], value)
+        for fcurve in fcurves:
+            if fcurve.keyframe_points:
+                fcurve.keyframe_points[-1].interpolation = target
+            fcurve.update()
+
+
 def _collect_merge_clips(objects):
     """Group unmuted NLA strips into clips and lay the clips out in sequence.
 
