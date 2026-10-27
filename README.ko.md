@@ -2,10 +2,7 @@
 
 # 🎬 Hyper NLA Exporter 사용자 가이드
 
-블렌더(Blender)를 위한 전문적이고 비파괴적인 애니메이션 워크플로우 생산성 애드온입니다. 타임라인 상의 **마커(Marker)**를 기준으로 하나의 긴 통합 애니메이션을 여러 개의 독립된 클립(Take/Clip)으로 손쉽게 분할하여 FBX 또는 GLB 파일로 단 한 번의 클릭에 내보냅니다. 번거로운 NLA 트랙 수동 생성 과정을 완벽히 생략할 수 있습니다.
-
-> [!IMPORTANT]
-> **사용 목적 및 지원 범위**: 이 애드온은 **Unity 게임 엔진용 FBX Animation Take** 추출 및 **웹 기반 서비스용 GLB NLA 애니메이션** 추출을 위해 특화되어 제작되었습니다. 명시된 목적 외의 다른 용도나 환경에서의 정상적인 작동은 보장하지 않습니다.
+**타임라인 하나에 애니메이션을 만들고, 클립 끝마다 마커를 찍고, 한 번 클릭합니다.** Hyper NLA Exporter는 그 타임라인을 이름 붙은 FBX Take나 GLB 애니메이션으로 내보냅니다. NLA 트랙을 손으로 만들 필요가 없습니다.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Blender-5.1+-306EE8?logo=blender&logoColor=white&style=for-the-badge" alt="Blender Version">
@@ -13,7 +10,38 @@
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License">
 </p>
 
+```
+Timeline   1 ─────── Idle ─────── 40 ─────── Walk ─────── 80 ───────── Attack ───────── 140
+Markers                           ▲ Idle                  ▲ Walk                        ▲ Attack
+Export     Idle (frames 1–40)       Walk (frames 1–40)       Attack (frames 1–60)   → one .fbx / .glb
+```
 
+---
+
+## 🤔 왜 만들었나
+
+블렌더의 NLA 에디터는 애니메이션을 **겹쳐 쌓기** 위한 도구입니다. Unity의 Timeline처럼, 켜져 있는 트랙을 모두 동시에 평가해 아래에서 위로 합칩니다. 반면 게임 엔진에 필요한 것은 Animator Controller처럼 **서로 독립된 클립 목록**입니다. 블렌더에는 이런 목록이 없어서 FBX·glTF 익스포터는 NLA 트랙을 클립 목록으로 빌려 쓰고, 겹쳐 쌓는 규칙까지 함께 따라옵니다.
+
+* 뮤트나 솔로 체크 하나만 놓쳐도 내보낸 파일에서 클립끼리 섞입니다.
+* 스트립의 기본 Extrapolation인 *Hold*가 첫 포즈로 아래 트랙의 클립을 덮습니다.
+* 남아 있는 활성 Action이 모든 트랙 위에서 다시 평가됩니다.
+* 클립에 키가 없는 채널은 아래 트랙의 움직임이 새어 나옵니다.
+
+이 애드온은 NLA를 직접 다룰 일이 없게 합니다. Action 하나를 만들고 마커로 클립을 표시하면, Quick Export가 내보내는 순간에만 NLA 트랙을 만들고, 기존 NLA는 격리하고, 결과를 검사한 뒤 모두 되돌립니다.
+
+| | NLA 트랙 직접 구성 | Hyper NLA Exporter |
+|---|---|---|
+| 클립 정의 | Action마다 트랙에 넣고 이름 짓고 위치 맞추기 | 클립 끝에 마커 찍기 |
+| 클립 하나 미리보기 | 트랙 뮤트/솔로, 활성 Action 해제 | 클립 줄의 ▶ 버튼 |
+| 체크 실수 하나 | 내보낸 파일에서 클립이 조용히 섞임 | 기존 NLA는 내보내는 동안 격리 후 복원 |
+| 여러 오브젝트·Empty·Shape Key | 오브젝트마다 트랙 세트를 손으로 맞춤 | 함께 분할해 GLB 하나로 |
+| 실수 발견 시점 | 엔진에 가져온 뒤 | 내보내기 전 **Check FBX / Check GLB** |
+| 수정 후 다시 내보내기 | 구성 작업 반복 | 클릭 한 번, Auto Export가 안전하게 덮어쓰기 |
+
+> [!IMPORTANT]
+> **사용 목적 및 지원 범위**: 이 애드온은 **Unity 게임 엔진용 FBX Animation Take** 추출 및 **웹 기반 서비스용 GLB NLA 애니메이션** 추출을 위해 특화되어 제작되었습니다. 명시된 목적 외의 다른 용도나 환경에서의 정상적인 작동은 보장하지 않습니다.
+
+---
 
 ## 🌟 주요 기능 (Key Features)
 
@@ -24,7 +52,9 @@
 * 📐 **경계 커브 보존**: 세그먼트의 첫 프레임과 끝 프레임에 누락된 키를 채우고, 베지어 핸들을 원본 곡선대로 절단하고, 마커 위에 놓인 키의 자동 핸들을 유지하고, 마커에 잘린 Easing 곡선은 프레임 단위로 베이크하여 분할 후 포즈와 움직임 곡선을 함께 보존합니다.
 * ✅ **안전한 내보내기**: 중복/빈 클립 이름, 2프레임 미만 클립, 같은 프레임에 겹친 마커, 잘못된 마커, 누락된 Action Slot과 F-Curve, 범위 안의 키 유무, 선택에서 빠진 스킨드 메시를 사전에 확인합니다. 키프레임이 하나도 없는 Action은 내보내기 대상으로 세지 않고 무시합니다. 내보내기 범위의 모든 오브젝트와 Shape Key의 기존 NLA 트랙은 Quick Export 동안 임시 격리하고 완료 후 원래 상태로 복원합니다. 활성 Action 없이 NLA만 가진 경우도 포함합니다.
 * 📂 **완료 폴더 열기**: 내보내기에 성공하면 생성된 FBX/GLB가 있는 폴더를 자동으로 엽니다.
+* 🗜️ **GLB Draco 압축**: 압축 레벨과 양자화 비트를 조절할 수 있는 선택형 메시 압축입니다.
 * ⚙️ **수동 NLA 제어 도구**: 마커를 이용해 영구적인 NLA 트랙을 생성하거나, 분할된 NLA들을 다시 하나의 긴 통합 액션으로 합치고, 깔끔하게 정리하는 복구용 도구를 제공합니다.
+* 🧪 **회귀 테스트**: 모든 수정에는 Blender 백그라운드 테스트가 함께 들어갑니다. `tests/run_tests.ps1`이 Blender 5.1과 5.2에서 테스트를 실행하며, 내보낸 파일을 다시 불러오거나 GLB에서 직접 읽어 실제 애니메이션 값을 확인합니다.
 
 
 
@@ -33,35 +63,35 @@
 3D Viewport > Sidebar (N-패널) > **K-Quick Tools** 탭의 **Hyper NLA Exporter** 패널에 위치해 있습니다.
 
 ```
-┌──────────────────────────────────────────┐
-│ ▼ 🎬 Hyper NLA Exporter                  │
-├──────────────────────────────────────────┤
-│ ┌─ Marker Segments ──────────────────┐   │
-│ │ First Clip Start: [ 1 ]            │   │
-│ │ 👁 [▶] [ Walk       ] 1~60 (60f) 🗑 │   │
-│ │ 👁 [▶] [ Run        ] 61~120(60f) 🗑 │   │
-│ │ [Reset Range]                      │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Targets: 1 Objects ───────────────┐   │
-│ │  Active Action: Rig_Action         │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Settings ─────────────────────────┐   │
-│ │ [ ] Only Deform Bones              │   │
-│ │ [x] Create Boundary Keys           │   │
-│ │ [x] Selected Only                  │   │
-│ │ [x] Open Folder After Export       │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Quick Export (Marker Split) ──────┐   │
-│ │    [Check FBX]      [Check GLB]     │   │
-│ │      [   FBX   ]      [   GLB   ]      │   │
-│ │ FBX: One rig only · GLB: Multi-rig │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ [▶ Manual NLA Tools]                     │
-└──────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ ▼ Hyper NLA Exporter                        │
+├─────────────────────────────────────────────┤
+│ ┌─ Marker Segments ───────────────────────┐ │
+│ │ First Clip Start: [ 1 ]                 │ │
+│ │ (o) [>] [ Idle   ]  1~40 (40f)    [x]   │ │
+│ │ (o) [>] [ Walk   ] 41~80 (40f)    [x]   │ │
+│ │ [ Reset Range ]                         │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────┐ │
+│ │ Quick Export: 1 Actions                 │ │
+│ │ Active Action: Rig_Action               │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─ Settings ──────────────────────────────┐ │
+│ │ Export Path: [ //Export/        ]       │ │
+│ │ [ ] Auto Export                         │ │
+│ │ [ ] Only Deform Bones                   │ │
+│ │ [x] Create Boundary Keys                │ │
+│ │ [x] Selected Only                       │ │
+│ │ [x] Open Folder After Export            │ │
+│ │ [ ] GLB Draco Compression               │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─ Quick Export (Marker Split) ───────────┐ │
+│ │ [ Check FBX ]        [ Check GLB ]      │ │
+│ │ [    FBX    ]        [    GLB    ]      │ │
+│ │ FBX: One rig only · GLB: Multi-rig      │ │
+│ └─────────────────────────────────────────┘ │
+│ ▶ Manual NLA Tools                          │
+└─────────────────────────────────────────────┘
 ```
 
 * **Marker Segments**: 타임라인 마커를 기반으로 감지된 애니메이션 클립들을 표시하며, 인라인 편집 기능을 지원합니다.

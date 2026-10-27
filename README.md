@@ -2,16 +2,44 @@
 
 # 🎬 Hyper NLA Exporter
 
-A professional, non-destructive animation workflow utility for Blender. Effortlessly split a single timeline animation into multiple distinct clips (Takes/Clips) using timeline **markers** and export them to FBX or GLB in one click—completely bypassing the manual NLA track creation headache.
-
-> [!IMPORTANT]
-> **Intended Use Case**: This addon was specifically developed for exporting **Unity FBX Animation Takes** and **Web-based GLB NLA Animations**. We do not guarantee correct operation or support for any other use cases outside of these environments.
+**Animate on one timeline, drop a marker at the end of each clip, click once.** Hyper NLA Exporter turns that timeline into named FBX takes or GLB animations for game engines and the web, without building a single NLA track by hand.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Blender-5.1+-306EE8?logo=blender&logoColor=white&style=for-the-badge" alt="Blender Version">
   <img src="https://img.shields.io/badge/Format-FBX%20%2F%20GLB-E04E39?style=for-the-badge" alt="Format support">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License">
 </p>
+
+```
+Timeline   1 ─────── Idle ─────── 40 ─────── Walk ─────── 80 ───────── Attack ───────── 140
+Markers                           ▲ Idle                  ▲ Walk                        ▲ Attack
+Export     Idle (frames 1–40)       Walk (frames 1–40)       Attack (frames 1–60)   → one .fbx / .glb
+```
+
+---
+
+## 🤔 Why It Exists
+
+Blender's NLA editor was designed for **layering** animation, much like Unity's Timeline: every unmuted track is evaluated at once and stacked bottom to top. Game engines need something else, a **list of independent clips** like an Animator Controller's. Blender has no such list, so the FBX and glTF exporters borrow NLA tracks for it, and the layering rules come along:
+
+* one forgotten mute or solo checkbox and clips blend into each other in the exported file;
+* a strip's default *Hold* extrapolation paints its first pose over clips on the tracks below;
+* a leftover active Action is evaluated on top of every track;
+* a clip that doesn't key a channel lets a lower track's motion leak through.
+
+This addon keeps the NLA out of your way. You author one Action and mark the clips; Quick Export builds the NLA tracks only for the moment of export, isolates any NLA you already had, checks the result, and removes everything again.
+
+| | Hand-built NLA tracks | Hyper NLA Exporter |
+|---|---|---|
+| Defining clips | Push each Action to a track, name it, line it up | Drop a marker at each clip's end |
+| Previewing one clip | Mute/solo tracks, clear the active Action | ▶ button on the clip's row |
+| One wrong checkbox | Clips silently mixed in the export | Existing NLA is isolated during export and restored |
+| Many objects, Empties, Shape Keys | A track set per object, kept in sync by hand | Split together into one GLB |
+| Finding mistakes | After importing into the engine | **Check FBX / Check GLB** before exporting |
+| Re-exporting after an edit | Repeat the whole setup | One click; Auto Export overwrites the file safely |
+
+> [!IMPORTANT]
+> **Intended Use Case**: This addon was specifically developed for exporting **Unity FBX Animation Takes** and **Web-based GLB NLA Animations**. We do not guarantee correct operation or support for any other use cases outside of these environments.
 
 ---
 
@@ -24,7 +52,9 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 * 📐 **Boundary Curve Preservation**: Inserts missing segment boundaries, trims Bezier handles, keeps automatic handles of keys that sit on a marker, and bakes cut easing curves per frame, so both poses and curve motion remain faithful across splits.
 * ✅ **Export Safety**: Checks duplicate or blank clip names, clips shorter than 2 frames, markers sharing a frame, invalid markers, missing Action Slots/F-Curves, empty clip ranges, and skinned meshes outside the export selection. An Action with no keyframes is ignored instead of counting as an export target. Existing NLA tracks on every object and Shape Key in the export scope are temporarily isolated during Quick Export and restored afterward, including owners that have NLA but no active Action.
 * 📂 **Open Export Folder**: Opens the containing folder automatically after a successful FBX/GLB export.
+* 🗜️ **GLB Draco Compression**: Optional mesh compression with adjustable level and quantization bits.
 * ⚙️ **Advanced Manual NLA Tools**: Easily convert timeline markers to permanent NLA tracks, merge NLA tracks back into a single Action, or run selective cleanups.
+* 🧪 **Regression Tested**: Every fix ships with a Blender background test. `tests/run_tests.ps1` runs the suites on Blender 5.1 and 5.2, including exports that are re-imported or read back from the GLB to check the actual animation values.
 
 ---
 
@@ -33,35 +63,35 @@ A professional, non-destructive animation workflow utility for Blender. Effortle
 Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the **Hyper NLA Exporter** panel:
 
 ```
-┌──────────────────────────────────────────┐
-│ ▼ 🎬 Hyper NLA Exporter                  │
-├──────────────────────────────────────────┤
-│ ┌─ Marker Segments ──────────────────┐   │
-│ │ First Clip Start: [ 1 ]            │   │
-│ │ 👁 [▶] [ Walk       ] 1~60 (60f) 🗑 │   │
-│ │ 👁 [▶] [ Run        ] 61~120(60f) 🗑 │   │
-│ │ [Reset Range]                      │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Targets: 1 Objects ───────────────┐   │
-│ │  Active Action: Rig_Action         │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Settings ─────────────────────────┐   │
-│ │ [ ] Only Deform Bones              │   │
-│ │ [x] Create Boundary Keys           │   │
-│ │ [x] Selected Only                  │   │
-│ │ [x] Open Folder After Export       │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ ┌─ Quick Export (Marker Split) ──────┐   │
-│ │    [Check FBX]      [Check GLB]     │   │
-│ │      [   FBX   ]      [   GLB   ]      │   │
-│ │ FBX: One rig only · GLB: Multi-rig │   │
-│ └────────────────────────────────────┘   │
-│                                          │
-│ [▶ Manual NLA Tools]                     │
-└──────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ ▼ Hyper NLA Exporter                        │
+├─────────────────────────────────────────────┤
+│ ┌─ Marker Segments ───────────────────────┐ │
+│ │ First Clip Start: [ 1 ]                 │ │
+│ │ (o) [>] [ Idle   ]  1~40 (40f)    [x]   │ │
+│ │ (o) [>] [ Walk   ] 41~80 (40f)    [x]   │ │
+│ │ [ Reset Range ]                         │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────┐ │
+│ │ Quick Export: 1 Actions                 │ │
+│ │ Active Action: Rig_Action               │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─ Settings ──────────────────────────────┐ │
+│ │ Export Path: [ //Export/        ]       │ │
+│ │ [ ] Auto Export                         │ │
+│ │ [ ] Only Deform Bones                   │ │
+│ │ [x] Create Boundary Keys                │ │
+│ │ [x] Selected Only                       │ │
+│ │ [x] Open Folder After Export            │ │
+│ │ [ ] GLB Draco Compression               │ │
+│ └─────────────────────────────────────────┘ │
+│ ┌─ Quick Export (Marker Split) ───────────┐ │
+│ │ [ Check FBX ]        [ Check GLB ]      │ │
+│ │ [    FBX    ]        [    GLB    ]      │ │
+│ │ FBX: One rig only · GLB: Multi-rig      │ │
+│ └─────────────────────────────────────────┘ │
+│ ▶ Manual NLA Tools                          │
+└─────────────────────────────────────────────┘
 ```
 
 * **Marker Segments**: Displays parsed timeline markers and provides inline management.
