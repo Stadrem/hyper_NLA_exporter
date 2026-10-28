@@ -122,9 +122,10 @@ Located in the 3D Viewport > Sidebar (N-Panel) > **K-Quick Tools** tab under the
 
 ## 🚀 Installation
 
-1. Download the repository as a `.zip` file.
-2. Open Blender, go to Edit > Preferences > Addons.
-3. Click Install... at the top right and select the downloaded `.zip` file.
+1. Download `hyper_NLA_exporter_vX.Y.Z.zip` from the [latest release](https://github.com/Stadrem/hyper_NLA_exporter/releases/latest). Don't unzip it.
+   * Avoid GitHub's green **Code > Download ZIP** button: that archive is named `hyper_NLA_exporter-main` and also contains the test suite.
+2. Open Blender and go to **Edit > Preferences > Add-ons**.
+3. Open the **▾** menu at the top right, choose **Install from Disk...**, and select the downloaded `.zip` file.
 4. Search for "Hyper NLA Exporter" in the list and check the checkbox to activate it.
 
 ---

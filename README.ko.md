@@ -121,9 +121,10 @@ Export     Idle (frames 1–40)       Walk (frames 1–40)       Attack (frames 
 
 ## 🚀 설치 방법
 
-1. 저장소를 `.zip` 파일로 다운로드합니다.
-2. 블렌더를 실행하고 `Edit > Preferences > Addons`로 이동합니다.
-3. 우측 상단의 `Install...` 버튼을 누르고 다운로드한 `.zip` 파일을 선택합니다.
+1. [최신 릴리스](https://github.com/Stadrem/hyper_NLA_exporter/releases/latest)에서 `hyper_NLA_exporter_vX.Y.Z.zip`을 다운로드합니다. 압축은 풀지 않습니다.
+   * GitHub의 초록색 **Code > Download ZIP** 버튼은 쓰지 마세요. 폴더 이름이 `hyper_NLA_exporter-main`이 되고 테스트 파일까지 포함됩니다.
+2. 블렌더를 실행하고 **Edit > Preferences > Add-ons**로 이동합니다.
+3. 우측 상단의 **▾** 메뉴에서 **Install from Disk...**를 선택하고 다운로드한 `.zip` 파일을 고릅니다.
 4. 검색창에 "Hyper NLA Exporter"를 입력하고 체크박스를 켜서 애드온을 활성화합니다.
 
 
